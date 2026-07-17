@@ -1,0 +1,174 @@
+{
+    "primary": {
+        "chinese": [
+            {
+                "id": "chinese_primary_1",
+                "type": "image_to_word",
+                "question": "看图识字",
+                "image": "sun",
+                "options": ["日", "月", "星"],
+                "correctAnswer": "日",
+                "hint": "这是我们每天都能看到的东西，它给我们带来光明和温暖。"
+            },
+            {
+                "id": "chinese_primary_2",
+                "type": "pinyin",
+                "question": "选择正确的拼音",
+                "word": "苹果",
+                "options": ["píng guǒ", "pín guǒ", "píng guō"],
+                "correctAnswer": "píng guǒ",
+                "hint": "第一个字的韵母是i，第二个字的声母是g。"
+            }
+        ],
+        "math": [
+            {
+                "id": "math_primary_1",
+                "type": "counting",
+                "question": "数一数有几只小兔子",
+                "image": "rabbits_3",
+                "options": ["2", "3", "4"],
+                "correctAnswer": "3",
+                "hint": "仔细看图片，数一数有几只小兔子。"
+            },
+            {
+                "id": "math_primary_2",
+                "type": "addition",
+                "question": "3 + 2 = ?",
+                "options": ["4", "5", "6"],
+                "correctAnswer": "5",
+                "hint": "你可以用手指数一数：3个手指加上2个手指是多少？"
+            }
+        ],
+        "english": [
+            {
+                "id": "english_primary_1",
+                "type": "letter_recognition",
+                "question": "找出字母 B",
+                "options": ["A", "B", "C"],
+                "correctAnswer": "B",
+                "hint": "这是字母表中的第二个字母。"
+            },
+            {
+                "id": "english_primary_2",
+                "type": "word_to_image",
+                "question": "选择与单词匹配的图片",
+                "word": "apple",
+                "options": ["apple", "banana", "orange"],
+                "correctAnswer": "apple",
+                "hint": "这是一种红色的水果，很甜很好吃。"
+            }
+        ]
+    },
+    "medium": {
+        "chinese": [
+            {
+                "id": "chinese_medium_1",
+                "type": "character_composition",
+                "question": "氵 + 工 = ?",
+                "options": ["江", "河", "海"],
+                "correctAnswer": "江",
+                "hint": "这是一个常见的水字旁的字。"
+            },
+            {
+                "id": "chinese_medium_2",
+                "type": "reading_comprehension",
+                "question": "小明有5个苹果，送给小红2个，还剩几个？",
+                "options": ["2", "3", "4"],
+                "correctAnswer": "3",
+                "hint": "5个苹果减去送出的2个苹果，还剩下多少？"
+            }
+        ],
+        "math": [
+            {
+                "id": "math_medium_1",
+                "type": "addition",
+                "question": "12 + 8 = ?",
+                "options": ["18", "20", "22"],
+                "correctAnswer": "20",
+                "hint": "10 + 10 = 20，然后加上剩下的部分。"
+            },
+            {
+                "id": "math_medium_2",
+                "type": "shape_recognition",
+                "question": "下面哪个是三角形？",
+                "options": ["△", "□", "○"],
+                "correctAnswer": "△",
+                "hint": "三角形有三个边和三个角。"
+            }
+        ],
+        "english": [
+            {
+                "id": "english_medium_1",
+                "type": "word_matching",
+                "question": "选择正确的单词填空：I have a ___.",
+                "options": ["dog", "cat", "ball"],
+                "correctAnswer": "dog",
+                "hint": "这是一种常见的宠物，会汪汪叫。"
+            },
+            {
+                "id": "english_medium_2",
+                "type": "sentence_completion",
+                "question": "选择正确的单词：This is a ___ apple.",
+                "options": ["red", "big", "small"],
+                "correctAnswer": "red",
+                "hint": "苹果通常是什么颜色的？"
+            }
+        ]
+    },
+    "advanced": {
+        "chinese": [
+            {
+                "id": "chinese_advanced_1",
+                "type": "word_analysis",
+                "question": "选择与'高兴'意思相近的词语",
+                "options": ["开心", "难过", "生气"],
+                "correctAnswer": "开心",
+                "hint": "高兴和开心都是表示心情好的词语。"
+            },
+            {
+                "id": "chinese_advanced_2",
+                "type": "reading_comprehension",
+                "question": "小明为什么没有去上学？(短文：今天是星期天，小明不用去上学。)",
+                "options": ["因为生病了", "因为是周末", "因为放假了"],
+                "correctAnswer": "因为是周末",
+                "hint": "仔细阅读短文，找出关键信息。"
+            }
+        ],
+        "math": [
+            {
+                "id": "math_advanced_1",
+                "type": "multiplication",
+                "question": "每盒装4个苹果，3盒共几个？",
+                "options": ["12", "16", "20"],
+                "correctAnswer": "12",
+                "hint": "4 × 3 = ?"
+            },
+            {
+                "id": "math_advanced_2",
+                "type": "area_calculation",
+                "question": "一个长方形长6厘米、宽4厘米，面积是多少？",
+                "options": ["20", "24", "28"],
+                "correctAnswer": "24",
+                "hint": "长方形面积 = 长 × 宽"
+            }
+        ],
+        "english": [
+            {
+                "id": "english_advanced_1",
+                "type": "tense",
+                "question": "选择正确的形式：She ___ (go) to school every day.",
+                "options": ["go", "goes", "going"],
+                "correctAnswer": "goes",
+                "hint": "主语是第三人称单数时，动词需要加s。"
+            },
+            {
+                "id": "english_advanced_2",
+                "type": "dialogue_understanding",
+                "question": "A: How are you? B: ___",
+                "options": ["I'm fine, thank you.", "I'm 8 years old.", "I like apples."],
+                "correctAnswer": "I'm fine, thank you.",
+                "hint": "这是一句常见的问候语回复。"
+            }
+        ]
+    }
+}

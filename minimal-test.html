@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head><title>测试</title></head>
+<body style="background:#000">
+<div id="loading" style="color:#fff;font-size:24px;text-align:center;margin-top:300px">正在加载...</div>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
+<script>
+// 最简单的测试 - 仅显示一个圆形
+new Phaser.Game({
+    type: Phaser.AUTO,
+    width: 400,
+    height: 600,
+    scene: {
+        create: function() {
+            document.getElementById('loading').style.display = 'none';
+            this.add.graphics().fillStyle(0x00ff00,1).fillCircle(200,300,100);
+            this.add.text(200,200,'游戏正常！',{fontSize:'32px',color:'#fff'}).setOrigin(0.5);
+        }
+    }
+});
+</script>
+</body>
+</html>

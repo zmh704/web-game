@@ -1,0 +1,1789 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/>
+<link rel="manifest" href="manifest.json"/>
+<link rel="icon" type="image/svg+xml" href="icons/icon-192.svg"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="奇迹森林"/>
+<title>奇迹森林大冒险</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{overflow:hidden;background:#111;font-family:'Arial','Microsoft YaHei',sans-serif;user-select:none}
+#loading{position:fixed;z-index:1000;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#1a1a2e;color:#ffd700;font-size:24px;font-weight:bold;transition:opacity 0.5s}
+#loading .spinner{width:50px;height:50px;border:4px solid rgba(255,215,0,0.2);border-top-color:#ffd700;border-radius:50%;animation:spin 0.8s linear infinite;margin-bottom:20px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* === 角色选择界面 === */
+#char-select{position:fixed;z-index:100;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(135deg,#1a1a2e,#2d1b4e);transition:opacity 0.5s}
+#char-select.hidden{opacity:0;pointer-events:none}
+#char-select h1{color:#ffd700;font-size:36px;margin-bottom:10px;text-shadow:0 0 20px rgba(255,215,0,0.5)}
+#char-select .subtitle{color:#aaa;font-size:16px;margin-bottom:30px}
+.char-grid{display:flex;gap:40px}
+.char-card{width:240px;padding:20px;border:3px solid rgba(255,255,255,0.1);border-radius:20px;text-align:center;cursor:pointer;transition:all 0.3s;background:rgba(255,255,255,0.05)}
+.char-card:hover{border-color:#ffd700;transform:translateY(-10px);box-shadow:0 10px 40px rgba(255,215,0,0.2)}
+.char-card .avatar{width:120px;height:140px;margin:0 auto 15px;position:relative}
+.char-card .avatar canvas{width:100%;height:100%;border-radius:10px}
+.char-card .name{color:#fff;font-size:28px;font-weight:bold;margin-bottom:5px}
+.char-card .tagline{color:#aaa;font-size:14px;margin-bottom:10px}
+.char-card .skill-tag{display:inline-block;padding:4px 12px;border-radius:10px;font-size:12px;font-weight:bold;margin-bottom:8px}
+.char-card .skill-desc{color:#ccc;font-size:13px;line-height:1.4}
+.char-qike .skill-tag{background:#ff8800;color:#fff}
+.char-miaomiao .skill-tag{background:#9944ff;color:#fff}
+
+/* === 难度选择界面 === */
+#diff-select{position:fixed;z-index:100;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(135deg,#1a1a2e,#1e3a2e);transition:opacity 0.5s}
+#diff-select.hidden{opacity:0;pointer-events:none}
+#diff-select h1{color:#ffd700;font-size:32px;margin-bottom:8px;text-shadow:0 0 20px rgba(255,215,0,0.5)}
+#diff-select .subtitle{color:#aaa;font-size:15px;margin-bottom:30px}
+.diff-grid{display:flex;gap:30px}
+.diff-card{width:200px;padding:25px 20px;border:3px solid rgba(255,255,255,0.1);border-radius:20px;text-align:center;cursor:pointer;transition:all 0.3s;background:rgba(255,255,255,0.05)}
+.diff-card:hover{border-color:#ffd700;transform:translateY(-8px);box-shadow:0 10px 40px rgba(255,215,0,0.2)}
+.diff-card .icon{font-size:48px;margin-bottom:10px;display:block}
+.diff-card .label{color:#fff;font-size:22px;font-weight:bold;margin-bottom:5px}
+.diff-card .desc{color:#aaa;font-size:13px;line-height:1.4}
+.diff-card .age{color:#ffd700;font-size:12px;margin-top:8px}
+
+/* === 游戏 UI === */
+#hud{position:fixed;z-index:50;top:10px;left:10px;right:10px;display:flex;justify-content:space-between;pointer-events:none}
+#hud-left{display:flex;align-items:center;gap:12px}
+.hud-item{background:rgba(0,0,0,0.6);padding:6px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.1)}
+.hud-item .label{color:#aaa;font-size:11px}
+.hud-item .value{color:#fff;font-size:16px;font-weight:bold}
+.hp-bar{width:120px;height:10px;background:rgba(255,0,0,0.2);border-radius:5px;overflow:hidden;margin-top:3px}
+.hp-fill{height:100%;background:linear-gradient(90deg,#ff4444,#ff8888);border-radius:5px;transition:width 0.3s}
+.star-icon{color:#ffd700}
+#monster-hp{position:fixed;z-index:50;top:50px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.6);padding:4px 16px;border-radius:10px;border:1px solid rgba(255,255,255,0.1);text-align:center;pointer-events:none}
+#monster-hp .label{color:#aaa;font-size:11px}
+#monster-hp-bar{width:150px;height:8px;background:rgba(255,0,0,0.2);border-radius:5px;overflow:hidden;margin-top:2px}
+#monster-hp-fill{height:100%;background:linear-gradient(90deg,#ff4444,#ff6644);border-radius:5px;transition:width 0.3s}
+
+/* 武器栏 */
+#weapon-bar-wrap{position:fixed;z-index:50;bottom:20px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:6px}
+#weapon-bar{display:flex;gap:8px;pointer-events:auto}
+.weapon-btn{width:80px;height:60px;border:2px solid rgba(255,255,255,0.15);border-radius:12px;background:rgba(0,0,0,0.6);color:#fff;font-size:12px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;transition:all 0.3s}
+.weapon-btn .icon{font-size:20px}
+.weapon-btn.active{border-color:#ffd700;background:rgba(255,215,0,0.15);box-shadow:0 0 20px rgba(255,215,0,0.3)}
+.weapon-btn.locked{opacity:0.3;cursor:not-allowed}
+.weapon-btn:not(.locked):hover{border-color:#4488ff}
+#weapon-label{color:#aaa;font-size:12px;background:rgba(0,0,0,0.5);padding:2px 12px;border-radius:6px}
+#message{position:fixed;z-index:60;top:80px;left:50%;transform:translateX(-50%);font-size:22px;font-weight:bold;text-shadow:0 0 20px currentColor;pointer-events:none;opacity:0;transition:opacity 0.3s}
+
+/* 答题弹窗 */
+#quiz-overlay{position:fixed;z-index:200;width:100%;height:100%;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.75)}
+#quiz-box{background:linear-gradient(135deg,#1e2a4e,#2a1e4e);border:2px solid rgba(255,215,0,0.3);border-radius:20px;padding:30px;max-width:500px;width:90%;text-align:center}
+#quiz-question{color:#fff;font-size:24px;margin-bottom:20px;line-height:1.4}
+#quiz-options{display:flex;flex-direction:column;gap:10px;margin-bottom:15px}
+.opt-btn{padding:14px;border:2px solid rgba(255,255,255,0.15);border-radius:12px;background:rgba(255,255,255,0.05);color:#fff;font-size:18px;cursor:pointer;transition:all 0.3s}
+.opt-btn:hover{border-color:#4488ff;background:rgba(68,136,255,0.1)}
+.opt-btn.correct{border-color:#44ff88!important;background:rgba(68,255,136,0.15)!important}
+.opt-btn.wrong{border-color:#ff4444!important;background:rgba(255,68,68,0.1)!important}
+#quiz-reward{color:#ffd700;font-size:18px;margin:12px 0;padding:10px;border-radius:10px;background:rgba(255,215,0,0.1);display:none}
+#quiz-close{padding:10px 30px;border:none;border-radius:10px;background:linear-gradient(135deg,#ffd700,#ff8800);color:#000;font-size:16px;font-weight:bold;cursor:pointer;display:none}
+
+/* 结算界面 */
+#game-over{position:fixed;z-index:200;width:100%;height:100%;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.8)}
+#game-over-box{background:linear-gradient(135deg,#1e2a4e,#2a1e4e);border:2px solid rgba(255,215,0,0.3);border-radius:20px;padding:40px;max-width:400px;width:90%;text-align:center}
+#game-over-box h2{color:#ffd700;font-size:32px;margin-bottom:20px}
+#game-over-box p{color:#ccc;font-size:18px;margin:8px 0}
+#restart-btn{margin-top:20px;padding:12px 40px;border:none;border-radius:10px;background:linear-gradient(135deg,#ffd700,#ff8800);color:#000;font-size:18px;font-weight:bold;cursor:pointer}
+
+/* 小地图 */
+#minimap{position:fixed;z-index:50;bottom:100px;right:15px;width:80px;height:80px;border-radius:10px;border:2px solid rgba(255,255,255,0.15);overflow:hidden;pointer-events:none}
+#minimap canvas{width:100%;height:100%}
+
+/* 操作提示 */
+#controls-hint{position:fixed;z-index:40;bottom:90px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,0.4);font-size:12px;pointer-events:none;text-align:center;line-height:1.5}
+</style>
+</head>
+<body>
+
+<!-- 加载 -->
+<div id="loading"><div class="spinner"></div>奇迹森林大冒险<br><span style="font-size:14px;color:#aaa;margin-top:10px">正在加载...</span></div>
+
+<!-- 角色选择 -->
+<div id="char-select">
+  <h1>🌟 奇迹森林大冒险</h1>
+  <div class="subtitle">选择你的冒险伙伴</div>
+  <div class="char-grid">
+    <div class="char-card char-qike" onclick="selectCharacter('qike')">
+      <div class="avatar"><canvas id="avatar-qike" width="120" height="140"></canvas></div>
+      <div class="name">奇奇 👦</div>
+      <div class="tagline">勇敢的小男孩探险家</div>
+      <div class="skill-tag">⚡ 疾风冲刺</div>
+      <div class="skill-desc">答对题攒能量，按Q释放提升速度+连击伤害</div>
+    </div>
+    <div class="char-card char-miaomiao" onclick="selectCharacter('miaomiao')">
+      <div class="avatar"><canvas id="avatar-miaomiao" width="120" height="140"></canvas></div>
+      <div class="name">妙妙 👧</div>
+      <div class="tagline">聪明的小女孩发明家</div>
+      <div class="skill-tag">🛡️ 能量护盾</div>
+      <div class="skill-desc">答对题攒能量，按Q释放护盾格挡伤害</div>
+    </div>
+  </div>
+</div>
+
+<!-- 难度选择 -->
+<div id="diff-select" class="hidden">
+  <h1>🎯 选择难度</h1>
+  <div class="subtitle">你想挑战哪片森林呢？</div>
+  <div class="diff-grid">
+    <div class="diff-card" onclick="selectDifficulty('easy')">
+      <span class="icon">🌱</span>
+      <div class="label">初级</div>
+      <div class="desc">学前班~一年级<br>简单有趣</div>
+      <div class="age">适合 5-6 岁</div>
+    </div>
+    <div class="diff-card" onclick="selectDifficulty('medium')">
+      <span class="icon">🌿</span>
+      <div class="label">中级</div>
+      <div class="desc">二年级~三年级<br>更多挑战</div>
+      <div class="age">适合 7-8 岁</div>
+    </div>
+    <div class="diff-card" onclick="selectDifficulty('hard')">
+      <span class="icon">🌳</span>
+      <div class="label">高级</div>
+      <div class="desc">四年级~五年级<br>最强考验</div>
+      <div class="age">适合 9-10 岁</div>
+    </div>
+  </div>
+</div>
+
+<!-- 游戏 HUD -->
+<div id="hud">
+  <div id="hud-left">
+    <div class="hud-item"><div class="label">❤️ 生命</div><div class="value" id="hp-text">100</div><div class="hp-bar"><div class="hp-fill" id="hp-fill" style="width:100%"></div></div></div>
+    <div class="hud-item"><div class="label star-icon">⭐ 星星</div><div class="value" id="star-text">0</div></div>
+    <div class="hud-item"><div class="label">🎯 角色</div><div class="value" id="char-name">奇奇</div></div>
+  </div>
+  <div class="hud-item" style="font-size:12px;color:#aaa">
+    <div>WASD移动 | 鼠标视角 | 空格跳跃 | E开门 | Q技能</div>
+  </div>
+</div>
+
+<div id="monster-hp">
+  <div class="label">👾 追风怪</div>
+  <div id="monster-hp-bar"><div id="monster-hp-fill" style="width:100%"></div></div>
+</div>
+
+<div id="weapon-bar-wrap">
+  <div id="weapon-bar"></div>
+  <div id="weapon-label">无武器</div>
+</div>
+
+<div id="message"></div>
+
+<div id="minimap"><canvas id="minimap-canvas" width="80" height="80"></canvas></div>
+
+<div id="controls-hint">💡 走近金色光球答题获取武器 → 攻击怪物通关</div>
+
+<!-- 答题弹窗 -->
+<div id="quiz-overlay">
+  <div id="quiz-box">
+    <div id="quiz-question"></div>
+    <div id="quiz-options"></div>
+    <div id="quiz-reward"></div>
+    <button id="quiz-close">继续冒险</button>
+  </div>
+</div>
+
+<!-- 结算 -->
+<div id="game-over">
+  <div id="game-over-box">
+    <h2 id="result-title">🎉 通关成功!</h2>
+    <p id="final-stars"></p>
+    <p id="final-answers"></p>
+    <p id="final-weapons"></p>
+    <button id="restart-btn" onclick="location.reload()">🔄 再来一次</button>
+  </div>
+</div>
+
+<script>
+// 立即隐藏加载界面（在Three.js加载前）
+document.getElementById('loading').style.display='none';
+</script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.0/build/three.min.js"></script>
+<script>
+// ============================================================
+// 题库
+// ============================================================
+var QDB={
+  easy:[
+    {q:'🐱 "cat"的中文是？',o:['狗','猫','鸟','鱼'],a:1,reward:'字母连发弓'},
+    {q:'🔢 2+3=？',o:['4','5','6','7'],a:1,reward:'几何能量珠'},
+    {q:'📖 "日"是什么字？',o:['月','日','目','田'],a:1,reward:'毛笔光剑'},
+    {q:'🐶 "dog"的中文是？',o:['猫','鸟','狗','鱼'],a:2,reward:'字母连发弓'},
+    {q:'🔢 5-2=？',o:['2','3','4','5'],a:1,reward:'几何能量珠'},
+    {q:'📖 "大"的反义词是？',o:['多','小','长','高'],a:1,reward:'毛笔光剑'},
+    {q:'🍎 "apple"的中文是？',o:['香蕉','苹果','橘子','西瓜'],a:1,reward:'字母连发弓'},
+    {q:'🔢 4+4=？',o:['6','7','8','9'],a:2,reward:'几何能量珠'},
+    {q:'📖 "上"的反义词是？',o:['大','下','左','右'],a:1,reward:'毛笔光剑'},
+    {q:'⭐ 什么颜色是红色？',o:['red','blue','green','yellow'],a:0,reward:'字母连发弓'},
+  ],
+  medium:[
+    {q:'🌊 "氵"+"工"=？',o:['江','河','湖','海'],a:0,reward:'毛笔光剑'},
+    {q:'🔢 4×5=？',o:['15','20','25','30'],a:1,reward:'几何能量珠'},
+    {q:'🐘 "elephant"的中文是？',o:['老虎','狮子','大象','长颈鹿'],a:2,reward:'字母连发弓'},
+    {q:'📖 "日"+"月"=？',o:['明','暗','星','光'],a:0,reward:'毛笔光剑'},
+    {q:'🔢 15-7=？',o:['6','7','8','9'],a:2,reward:'几何能量珠'},
+    {q:'🎵 "head"的中文是？',o:['手','脚','头','眼睛'],a:2,reward:'字母连发弓'},
+    {q:'📚 "高兴"的近义词是？',o:['难过','生气','开心','害怕'],a:2,reward:'毛笔光剑'},
+    {q:'🔢 6×7=？',o:['40','42','48','56'],a:1,reward:'几何能量珠'},
+    {q:'🔤 "I ___ a boy."',o:['am','is','are','be'],a:0,reward:'字母连发弓'},
+    {q:'📖 "木"+"木"=？',o:['林','森','树','村'],a:0,reward:'毛笔光剑'},
+  ],
+  hard:[
+    {q:'📖 "一望无际"形容什么？',o:['很小','很大','很高','很深'],a:1,reward:'毛笔光剑'},
+    {q:'🔢 36÷4=？',o:['7','8','9','10'],a:2,reward:'几何能量珠'},
+    {q:'🔤 "She ___ a student."',o:['am','is','are','be'],a:1,reward:'字母连发弓'},
+    {q:'📚 "小心翼翼"的反义词是？',o:['小心','粗心','细心','用心'],a:1,reward:'毛笔光剑'},
+    {q:'🔢 长方形长6cm宽4cm,面积是？',o:['20cm²','24cm²','28cm²','30cm²'],a:1,reward:'几何能量珠'},
+    {q:'🔤 "I have ___ apple."',o:['a','an','the','some'],a:1,reward:'字母连发弓'},
+    {q:'📖 "叶"字的部首是？',o:['口','十','木','日'],a:2,reward:'毛笔光剑'},
+    {q:'🔢 0.5+0.3=？',o:['0.7','0.8','0.9','1.0'],a:1,reward:'几何能量珠'},
+    {q:'🔤 "He goes ___ bus."',o:['by','on','in','with'],a:0,reward:'字母连发弓'},
+    {q:'📚 "守株待兔"说明什么？',o:['要努力','要等待','要聪明','要勇敢'],a:0,reward:'毛笔光剑'},
+  ]
+};
+var WEAPONS={
+  '毛笔光剑':{dmg:20,color:0xffd700,icon:'🖌️',desc:'语文·金色剑波'},
+  '几何能量珠':{dmg:18,color:0x00ff88,icon:'🔮',desc:'数学·糖果光弹'},
+  '字母连发弓':{dmg:15,color:0x4488ff,icon:'🏹',desc:'英语·字母箭矢'}
+};
+var WEAPON_LIST=['毛笔光剑','几何能量珠','字母连发弓'];
+
+// ============================================================
+// 绘制角色头像 - 奇奇(男孩) / 妙妙(女孩) 差异化设计
+// ============================================================
+function drawAvatar(id,gender,bodyColor,hatColor){
+  var c=document.getElementById(id);
+  var ctx=c.getContext('2d');
+  ctx.clearRect(0,0,120,140);
+  var isBoy=gender==='boy';
+  
+  // 身体
+  ctx.fillStyle=bodyColor;
+  ctx.beginPath();ctx.ellipse(60,95,28,30,0,0,Math.PI*2);ctx.fill();
+  
+  // 头
+  ctx.fillStyle='#ffcc99';
+  ctx.beginPath();ctx.arc(60,50,28,0,Math.PI*2);ctx.fill();
+  
+  // ---- 发型 ----
+  if(isBoy){
+    // 奇奇: 男孩短发
+    ctx.fillStyle='#553322';
+    ctx.beginPath();ctx.arc(60,42,29,Math.PI,Math.PI*2);ctx.fill();
+    // 前额碎发
+    ctx.fillStyle='#6b4433';
+    ctx.beginPath();ctx.arc(48,46,8,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(72,46,8,0,Math.PI*2);ctx.fill();
+    // 平刘海
+    ctx.fillStyle='#553322';
+    ctx.fillRect(35,44,50,4);
+    ctx.fillRect(40,40,40,3);
+  }else{
+    // 妙妙: 女孩长发+双辫子
+    ctx.fillStyle='#663344';
+    ctx.beginPath();ctx.arc(60,42,29,Math.PI,Math.PI*2);ctx.fill();
+    // 左辫子
+    ctx.fillStyle='#885566';
+    ctx.beginPath();ctx.ellipse(32,55,6,12,0.2,0,Math.PI*2);ctx.fill();
+    // 右辫子
+    ctx.beginPath();ctx.ellipse(88,55,6,12,-0.2,0,Math.PI*2);ctx.fill();
+    // 刘海
+    ctx.fillStyle='#663344';
+    ctx.fillRect(36,44,48,5);
+    ctx.fillRect(38,40,44,4);
+    // 蝴蝶结发饰
+    ctx.fillStyle='#ff88cc';
+    ctx.beginPath();ctx.ellipse(42,38,6,4,0.3,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(48,38,5,3,-0.3,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(72,38,6,4,-0.3,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(78,38,5,3,0.3,0,Math.PI*2);ctx.fill();
+  }
+  
+  // ---- 眼睛 ----
+  if(isBoy){
+    // 男孩: 圆眼睛，精神
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.ellipse(48,52,7,8,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(72,52,7,8,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#333';
+    ctx.beginPath();ctx.arc(50,54,4,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(74,54,4,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(48,50,2,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(72,50,2,0,Math.PI*2);ctx.fill();
+    // 男孩粗眉
+    ctx.strokeStyle='#553322';
+    ctx.lineWidth=2.5;
+    ctx.beginPath();ctx.moveTo(40,43);ctx.lineTo(54,41);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(80,43);ctx.lineTo(66,41);ctx.stroke();
+  }else{
+    // 女孩: 大圆眼，带睫毛
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.ellipse(48,52,8,9,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(72,52,8,9,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#552244';
+    ctx.beginPath();ctx.arc(50,54,4.5,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(74,54,4.5,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(48,49,2.5,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(72,49,2.5,0,Math.PI*2);ctx.fill();
+    // 睫毛
+    ctx.strokeStyle='#552244';
+    ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(42,48);ctx.lineTo(44,44);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(54,48);ctx.lineTo(56,44);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(66,48);ctx.lineTo(64,44);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(78,48);ctx.lineTo(76,44);ctx.stroke();
+    // 细眉
+    ctx.strokeStyle='#885566';
+    ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(42,44);ctx.lineTo(55,42);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(78,44);ctx.lineTo(65,42);ctx.stroke();
+  }
+  
+  // 嘴巴
+  ctx.strokeStyle='#ff6666';
+  ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(60,63,9,0.1,Math.PI-0.1);ctx.stroke();
+  
+  // 腮红
+  ctx.fillStyle='rgba(255,150,150,0.3)';
+  ctx.beginPath();ctx.ellipse(40,65,7,4,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.ellipse(80,65,7,4,0,0,Math.PI*2);ctx.fill();
+  
+  // 帽子
+  ctx.fillStyle=hatColor;
+  ctx.beginPath();ctx.ellipse(60,35,20,8,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(60,30,14,Math.PI,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffd700';
+  ctx.beginPath();ctx.arc(60,16,4,0,Math.PI*2);ctx.fill();
+  
+  // 手臂
+  ctx.fillStyle=bodyColor;
+  ctx.fillRect(30,85,10,25);
+  ctx.fillRect(80,85,10,25);
+  ctx.fillStyle='#ffcc99';
+  ctx.beginPath();ctx.arc(35,110,6,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(85,110,6,0,Math.PI*2);ctx.fill();
+  
+  // 腿
+  if(isBoy){
+    ctx.fillStyle='#4477aa';
+    ctx.fillRect(48,120,8,18);
+    ctx.fillRect(64,120,8,18);
+    ctx.fillStyle='#ff6600';
+    ctx.fillRect(45,135,14,6);
+    ctx.fillRect(61,135,14,6);
+  }else{
+    // 女孩裙子
+    ctx.fillStyle='#aa66ff';
+    ctx.beginPath();ctx.ellipse(60,118,22,8,0,0,Math.PI);ctx.fill();
+    ctx.fillStyle='#ff88cc';
+    ctx.beginPath();ctx.ellipse(60,120,18,5,0,0,Math.PI);ctx.fill();
+    ctx.fillStyle='#ffcc99';
+    ctx.fillRect(50,118,6,14);
+    ctx.fillRect(64,118,6,14);
+    ctx.fillStyle='#fff';
+    ctx.fillRect(49,126,8,6);
+    ctx.fillRect(63,126,8,6);
+    ctx.fillStyle='#cc3333';
+    ctx.fillRect(47,132,12,5);
+    ctx.fillRect(61,132,12,5);
+  }
+  
+  // 配饰
+  if(isBoy){
+    // 奇奇: 护目镜
+    ctx.strokeStyle='#ff8800';
+    ctx.lineWidth=2;
+    ctx.beginPath();ctx.ellipse(48,52,10,10,0,0,Math.PI*2);ctx.stroke();
+    ctx.beginPath();ctx.ellipse(72,52,10,10,0,0,Math.PI*2);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(56,52);ctx.lineTo(64,52);ctx.stroke();
+  }else{
+    // 妙妙: 小挎包
+    ctx.fillStyle='#9944ff';
+    ctx.fillRect(82,78,14,20);
+    ctx.strokeStyle='#7722dd';
+    ctx.lineWidth=1;
+    ctx.strokeRect(82,78,14,20);
+    ctx.fillStyle='#ffd700';
+    ctx.beginPath();ctx.arc(89,85,3,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#9944ff';
+    ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(82,80);ctx.lineTo(75,74);ctx.stroke();
+  }
+}
+
+// ============================================================
+// 选择流程
+// ============================================================
+var selectedChar='qike';
+var selectedDiff='easy';
+
+function selectCharacter(ch){
+  selectedChar=ch;
+  document.getElementById('char-select').classList.add('hidden');
+  document.getElementById('diff-select').classList.remove('hidden');
+}
+
+function selectDifficulty(d){
+  selectedDiff=d;
+  document.getElementById('diff-select').classList.add('hidden');
+  GS.difficulty=d;
+  GS.character=selectedChar;
+  startGame();
+}
+
+function startGame(){
+  init();
+}
+
+// ============================================================
+// 游戏状态
+// ============================================================
+var GS={
+  hp:100,maxHp:100,
+  stars:0,
+  weapons:{},
+  curWeapon:null,
+  correct:0,total:0,
+  difficulty:'easy',
+  chapter:1,
+  character:'qike',
+  monsterHp:100,monsterMaxHp:100,
+  running:false,gameOver:false,
+  weaponCount:0,
+  jumpPower:0,
+  isJumping:false,
+  canJump:true,
+  inSecondRoom:false,
+  skillEnergy:0,
+  skillMax:100,
+  skillReady:false
+};
+
+// ============================================================
+// Three.js 场景
+// ============================================================
+var scene,camera,renderer,clock,player,monster;
+var keys={},mouse={x:0,y:0},isPointerLocked=false;
+var walls=[],quizItems=[],projectiles=[];
+var attackCooldown=0,monsterAttackCooldown=0;
+var hitFlash=0,monsterHitFlash=0;
+var roomSize=30,halfRoom=15;
+var moveSpeed=5;
+var gravity=-12;
+var playerVelY=0;
+var groundY=0;
+var furniture=[];
+var doorObjects=[];
+var obstacles=[];
+var secondRoomObjects=[];
+
+function init(){
+  var loading=document.getElementById('loading');
+  scene=new THREE.Scene();
+  scene.background=new THREE.Color(0x1a1a2e);
+  scene.fog=new THREE.Fog(0x1a1a2e,25,40);
+  
+  camera=new THREE.PerspectiveCamera(60,window.innerWidth/window.innerHeight,0.1,50);
+  camera.position.set(0,5,10);
+  
+  renderer=new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(window.innerWidth,window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+  renderer.shadowMap.enabled=true;
+  renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+  renderer.toneMapping=THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure=1.2;
+  document.body.appendChild(renderer.domElement);
+  
+  clock=new THREE.Clock();
+  
+  // 灯光
+  var ambient=new THREE.AmbientLight(0x4466aa,0.4);
+  scene.add(ambient);
+  var dirLight=new THREE.DirectionalLight(0xffeedd,1);
+  dirLight.position.set(8,15,8);
+  dirLight.castShadow=true;
+  dirLight.shadow.mapSize.width=2048;
+  dirLight.shadow.mapSize.height=2048;
+  dirLight.shadow.camera.near=0.5;
+  dirLight.shadow.camera.far=40;
+  dirLight.shadow.camera.left=-20;
+  dirLight.shadow.camera.right=20;
+  dirLight.shadow.camera.top=20;
+  dirLight.shadow.camera.bottom=-20;
+  scene.add(dirLight);
+  var fillLight=new THREE.DirectionalLight(0x8888ff,0.3);
+  fillLight.position.set(-5,8,-8);
+  scene.add(fillLight);
+  
+  buildRoom();
+  createPlayer();
+  createMonster();
+  spawnQuizItems();
+  buildWeaponBar();
+  
+  // 显示角色名
+  document.getElementById('char-name').textContent=GS.character==='qike'?'奇奇':'妙妙';
+  
+  // 事件
+  window.addEventListener('resize',function(){
+    camera.aspect=window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth,window.innerHeight);
+  });
+  document.addEventListener('keydown',function(e){
+    keys[e.key.toLowerCase()]=true;
+    if(e.key===' '){e.preventDefault();tryJump();}
+    if(e.key==='e'||e.key==='E')interactDoor();
+  });
+  document.addEventListener('keyup',function(e){keys[e.key.toLowerCase()]=false});
+  document.addEventListener('mousemove',function(e){
+    if(isPointerLocked){
+      mouse.x+=e.movementX*0.002;
+      mouse.y+=e.movementY*0.002;
+      mouse.y=Math.max(-1.5,Math.min(1.5,mouse.y));
+    }
+  });
+  document.addEventListener('pointerlockchange',function(){isPointerLocked=document.pointerLockElement===renderer.domElement});
+  renderer.domElement.addEventListener('click',function(){
+    if(!isPointerLocked&&!GS.gameOver&&GS.running)renderer.domElement.requestPointerLock();
+  });
+  document.addEventListener('mousedown',function(e){if(e.button===0&&isPointerLocked)attack()});
+  document.addEventListener('keydown',function(e){
+    if(e.key==='q'||e.key==='Q')useSkill();
+  });
+  
+  loading.style.opacity='0';
+  setTimeout(function(){loading.style.display='none'},500);
+  GS.running=true;
+  animate();
+}
+
+// ============================================================
+// 场景建造
+// ============================================================
+function buildRoom(){
+  var ch=GS.chapter;
+  var roomColors=[0x9933ff,0x3366ff,0x33cc33,0xff6600,0x333366];
+  var roomColor=roomColors[ch-1]||0x4466aa;
+  var floorColor=0x223344;
+  
+  // === 主房间 ===
+  var floor=new THREE.Mesh(
+    new THREE.PlaneGeometry(roomSize,roomSize),
+    new THREE.MeshStandardMaterial({color:floorColor,roughness:0.8,metalness:0.1})
+  );
+  floor.rotation.x=-Math.PI/2;floor.receiveShadow=true;
+  floor.position.y=groundY;
+  scene.add(floor);
+  
+  // 网格线
+  var gridHelper=new THREE.GridHelper(roomSize,20,0x445566,0x334455);
+  gridHelper.position.y=groundY+0.01;
+  scene.add(gridHelper);
+  
+  // 墙壁
+  var wallMat=new THREE.MeshStandardMaterial({color:roomColor,roughness:0.9,side:THREE.DoubleSide});
+  var wallPositions=[
+    {x:0,z:-halfRoom,ry:0},{x:0,z:halfRoom,ry:0},
+    {x:-halfRoom,z:0,ry:Math.PI/2},{x:halfRoom,z:0,ry:Math.PI/2}
+  ];
+  wallPositions.forEach(function(p){
+    var wall=new THREE.Mesh(new THREE.PlaneGeometry(roomSize,4),wallMat);
+    wall.position.set(p.x,2,p.z);wall.rotation.y=p.ry;wall.castShadow=true;
+    scene.add(wall);walls.push(wall);
+  });
+  
+  // 天花板光带
+  for(var i=-12;i<=12;i+=4){
+    var strip=new THREE.Mesh(
+      new THREE.PlaneGeometry(0.15,roomSize-2),
+      new THREE.MeshBasicMaterial({color:0x4488ff,transparent:true,opacity:0.08})
+    );
+    strip.rotation.x=-Math.PI/2;strip.position.set(i,4.01,0);
+    scene.add(strip);
+  }
+  
+  // === 第二房间 ===
+  var floor2=new THREE.Mesh(
+    new THREE.PlaneGeometry(roomSize,roomSize),
+    new THREE.MeshStandardMaterial({color:0x2a3a4a,roughness:0.8,metalness:0.1})
+  );
+  floor2.rotation.x=-Math.PI/2;floor2.receiveShadow=true;
+  floor2.position.set(0,groundY,halfRoom*2);
+  scene.add(floor2);
+  
+  // 第二房间墙壁
+  var wallPositions2=[
+    {x:0,z:halfRoom+halfRoom,ry:0},{x:0,z:halfRoom-halfRoom,ry:0},
+    {x:-halfRoom,z:halfRoom,ry:Math.PI/2},{x:halfRoom,z:halfRoom,ry:Math.PI/2}
+  ];
+  wallPositions2.forEach(function(p){
+    var wall=new THREE.Mesh(new THREE.PlaneGeometry(roomSize,4),wallMat);
+    wall.position.set(p.x,2,p.z);wall.rotation.y=p.ry;wall.castShadow=true;
+    scene.add(wall);walls.push(wall);
+    secondRoomObjects.push(wall);
+  });
+  
+  // 隔墙（中间分隔两房间）
+  var midWallMat=new THREE.MeshStandardMaterial({color:0x334466,roughness:0.9,side:THREE.DoubleSide});
+  var midWall=new THREE.Mesh(new THREE.PlaneGeometry(roomSize,4),midWallMat);
+  midWall.position.set(0,2,halfRoom);midWall.rotation.y=0;midWall.castShadow=true;
+  scene.add(midWall);walls.push(midWall);
+  
+  // 门洞
+  var doorW=2,doorH=2;
+  var doorMat=new THREE.MeshStandardMaterial({color:0x44ff88,roughness:0.3,emissive:0x44ff88,emissiveIntensity:0.15,transparent:true,opacity:0.6,side:THREE.DoubleSide});
+  var door=new THREE.Mesh(new THREE.PlaneGeometry(doorW,doorH),doorMat);
+  door.position.set(0,1.2,halfRoom+0.01);door.rotation.y=0;
+  scene.add(door);doorObjects.push(door);
+  
+  // 门框
+  var frameMat=new THREE.MeshStandardMaterial({color:0x88aacc,roughness:0.5});
+  [-1.1,1.1].forEach(function(x){
+    var pillar=new THREE.Mesh(new THREE.BoxGeometry(0.2,3,0.15),frameMat);
+    pillar.position.set(x,1.5,halfRoom);scene.add(pillar);doorObjects.push(pillar);
+  });
+  var topFrame=new THREE.Mesh(new THREE.BoxGeometry(2.4,0.15,0.15),frameMat);
+  topFrame.position.set(0,3.05,halfRoom);scene.add(topFrame);doorObjects.push(topFrame);
+  
+  // === 家具 ===
+  createTable(-3,groundY,-3,0x8B5E3C);
+  createTable(4,groundY,-4,0x6B4E3C);
+  createChair(-5,groundY,2);
+  createChair(5,groundY,2);
+  createBed(4,groundY,5);
+  
+  // 障碍物
+  createObstacle(-7,groundY,6,0x44dd88);
+  createObstacle(7,groundY,-6,0xdd8844);
+  createObstacle(0,groundY,7,0x8844dd);
+  
+  // 第二房间家具
+  createBookshelf(-3,groundY,halfRoom+4);
+  createBookshelf(3,groundY,halfRoom+5);
+  createChest(0,groundY,halfRoom+8);
+  
+  // 装饰光柱
+  for(var i=-10;i<=10;i+=5){
+    for(var j=-10;j<=10;j+=5){
+      if(Math.random()>0.6){
+        var pillarLight=new THREE.Mesh(
+          new THREE.CylinderGeometry(0.02,0.05,2,4),
+          new THREE.MeshBasicMaterial({color:0x4488ff,transparent:true,opacity:0.05})
+        );
+        pillarLight.position.set(i,1+Math.random()*2,j);scene.add(pillarLight);
+      }
+    }
+  }
+}
+
+// 桌子
+function createTable(x,y,z,color){
+  var g=new THREE.Group();
+  var tableMat=new THREE.MeshStandardMaterial({color:color||0x8B5E3C,roughness:0.6});
+  var top=new THREE.Mesh(new THREE.BoxGeometry(1.2,0.08,0.8),tableMat);
+  top.position.y=0.7;top.castShadow=true;top.receiveShadow=true;
+  g.add(top);
+  [-0.45,0.45].forEach(function(px){
+    [-0.3,0.3].forEach(function(pz){
+      var leg=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.05,0.65,6),tableMat);
+      leg.position.set(px,0.35,pz);g.add(leg);
+    });
+  });
+  // 花瓶+花
+  var vase=new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.1,0.15,8),new THREE.MeshStandardMaterial({color:0x4488ff,roughness:0.5}));
+  vase.position.set(0.3,0.8,0.1);g.add(vase);
+  var flower=new THREE.Mesh(new THREE.SphereGeometry(0.08,6,6),new THREE.MeshStandardMaterial({color:0xff88aa,emissive:0xff88aa,emissiveIntensity:0.2}));
+  flower.position.set(0.3,0.95,0.1);g.add(flower);
+  g.position.set(x,y,z);
+  scene.add(g);
+  furniture.push(g);
+}
+
+// 椅子
+function createChair(x,y,z){
+  var g=new THREE.Group();
+  var chairMat=new THREE.MeshStandardMaterial({color:0x8B5E3C,roughness:0.6});
+  var seat=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.06,0.5),chairMat);
+  seat.position.y=0.4;seat.castShadow=true;g.add(seat);
+  var back=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.35,0.04),chairMat);
+  back.position.set(0,0.6,-0.25);g.add(back);
+  [-0.2,0.2].forEach(function(px){
+    [-0.2,0.2].forEach(function(pz){
+      var leg=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.04,0.4,6),chairMat);
+      leg.position.set(px,0.2,pz);g.add(leg);
+    });
+  });
+  g.position.set(x,y,z);
+  g.rotation.y=Math.random()*0.5;
+  scene.add(g);
+  furniture.push(g);
+}
+
+// 床
+function createBed(x,y,z){
+  var g=new THREE.Group();
+  var bedMat=new THREE.MeshStandardMaterial({color:0x6B8E5C,roughness:0.7});
+  var base=new THREE.Mesh(new THREE.BoxGeometry(1.8,0.25,1.2),bedMat);
+  base.position.y=0.15;base.castShadow=true;base.receiveShadow=true;
+  g.add(base);
+  var mattress=new THREE.Mesh(new THREE.BoxGeometry(1.7,0.15,1.1),new THREE.MeshStandardMaterial({color:0x88aacc,roughness:0.9}));
+  mattress.position.y=0.35;g.add(mattress);
+  var pillow=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.08,0.4),new THREE.MeshStandardMaterial({color:0xffffff,roughness:0.9}));
+  pillow.position.set(-0.5,0.42,-0.3);g.add(pillow);
+  var blanket=new THREE.Mesh(new THREE.BoxGeometry(1.2,0.04,0.8),new THREE.MeshStandardMaterial({color:0xff88aa,roughness:0.8}));
+  blanket.position.set(0.2,0.43,0.1);g.add(blanket);
+  g.position.set(x,y,z);
+  g.rotation.y=0.2;
+  scene.add(g);
+  furniture.push(g);
+}
+
+// 书架
+function createBookshelf(x,y,z){
+  var g=new THREE.Group();
+  var shelfMat=new THREE.MeshStandardMaterial({color:0x6B4E3C,roughness:0.7});
+  var sides=new THREE.Mesh(new THREE.BoxGeometry(0.06,1.2,0.4),shelfMat);
+  sides.position.set(0,0.6,0);g.add(sides);
+  [-0.4,0.4].forEach(function(px){
+    var side=new THREE.Mesh(new THREE.BoxGeometry(0.05,1.2,0.4),shelfMat);
+    side.position.set(px,0.6,0);g.add(side);
+  });
+  [0.2,0.6,1.0].forEach(function(sy){
+    var shelf=new THREE.Mesh(new THREE.BoxGeometry(0.75,0.03,0.35),shelfMat);
+    shelf.position.set(0,sy,0);g.add(shelf);
+  });
+  // 书
+  var colors=[0xff4444,0x44ff44,0x4488ff,0xffd700,0xff8800,0x9944ff];
+  for(var i=0;i<4;i++){
+    var book=new THREE.Mesh(
+      new THREE.BoxGeometry(0.04,0.12+Math.random()*0.08,0.06),
+      new THREE.MeshStandardMaterial({color:colors[Math.floor(Math.random()*colors.length)]})
+    );
+    book.position.set(-0.3+Math.random()*0.6,0.7+Math.random()*0.3,0.15+Math.random()*0.1);
+    book.rotation.y=(Math.random()-0.5)*0.1;
+    g.add(book);
+  }
+  g.position.set(x,y,z);
+  scene.add(g);
+  furniture.push(g);
+  secondRoomObjects.push(g);
+}
+
+// 箱子
+function createChest(x,y,z){
+  var g=new THREE.Group();
+  var chestMat=new THREE.MeshStandardMaterial({color:0x8B5E3C,roughness:0.6});
+  var body=new THREE.Mesh(new THREE.BoxGeometry(0.8,0.5,0.6),chestMat);
+  body.position.y=0.25;body.castShadow=true;
+  g.add(body);
+  var lid=new THREE.Mesh(new THREE.BoxGeometry(0.7,0.08,0.55),new THREE.MeshStandardMaterial({color:0x6B3E1C,roughness:0.7}));
+  lid.position.set(0,0.55,0);
+  g.add(lid);
+  var lock=new THREE.Mesh(new THREE.SphereGeometry(0.05,6,6),new THREE.MeshStandardMaterial({color:0xffd700}));
+  lock.position.set(0,0.55,0.25);
+  g.add(lock);
+  g.position.set(x,y,z);
+  scene.add(g);
+  furniture.push(g);
+  secondRoomObjects.push(g);
+}
+
+// 障碍物
+function createObstacle(x,y,z,color){
+  var g=new THREE.Group();
+  var h=0.4+Math.random()*0.3;
+  var w=0.5+Math.random()*0.3;
+  var obs=new THREE.Mesh(new THREE.BoxGeometry(w,h,0.5),new THREE.MeshStandardMaterial({color:color,roughness:0.7,emissive:color,emissiveIntensity:0.05}));
+  obs.position.y=h/2;obs.castShadow=true;obs.receiveShadow=true;
+  g.add(obs);
+  var top=new THREE.Mesh(new THREE.BoxGeometry(w*0.8,0.03,0.4),new THREE.MeshBasicMaterial({color:color,transparent:true,opacity:0.3}));
+  top.position.y=h+0.02;
+  g.add(top);
+  g.position.set(x,y,z);
+  scene.add(g);
+  obstacles.push(g);
+}
+
+// ============================================================
+// 角色创建 (3D) - 奇奇(男孩)/妙妙(女孩) - 完全重制的可见腿部
+// ============================================================
+function createPlayer(){
+  var g=new THREE.Group();
+  var isQike=GS.character==='qike';
+  var isBoy=isQike;
+  var mainColor=isBoy?0xff8800:0xcc77ff;
+  var hatColor=isBoy?0xff6600:0x9944ff;
+  
+  // 身体（整体比例调整，让腿更显眼）
+  var bodyMat=new THREE.MeshStandardMaterial({color:mainColor,roughness:0.5,emissive:mainColor,emissiveIntensity:0.05});
+  var body=new THREE.Mesh(new THREE.CylinderGeometry(0.45,0.55,0.65,10),bodyMat);
+  body.position.y=0.8;body.castShadow=true;g.add(body);
+  
+  // 腰带
+  var belt=new THREE.Mesh(new THREE.TorusGeometry(0.48,0.04,4,12),new THREE.MeshStandardMaterial({color:0xffd700,roughness:0.3}));
+  belt.position.y=0.55;belt.rotation.x=Math.PI/2;g.add(belt);
+  
+  // === 女孩裙子 ===
+  if(!isBoy){
+    var skirt=new THREE.Mesh(new THREE.ConeGeometry(0.6,0.28,10),new THREE.MeshStandardMaterial({color:0xaa66ff,roughness:0.6}));
+    skirt.position.y=0.38;g.add(skirt);
+    var skirtRuffle=new THREE.Mesh(new THREE.TorusGeometry(0.6,0.04,6,12),new THREE.MeshStandardMaterial({color:0xff88cc,roughness:0.6}));
+    skirtRuffle.position.y=0.2;skirtRuffle.rotation.x=Math.PI/2;g.add(skirtRuffle);
+  }
+  
+  // 头
+  var headMat=new THREE.MeshStandardMaterial({color:0xffcc99,roughness:0.3});
+  var head=new THREE.Mesh(new THREE.SphereGeometry(0.38,14,14),headMat);
+  head.position.y=1.25;head.castShadow=true;g.add(head);
+  
+  // === 发型(3D) ===
+  if(isBoy){
+    // 男孩短发
+    var hair=new THREE.Mesh(new THREE.SphereGeometry(0.35,10,10,0,Math.PI*2,0,Math.PI/2),new THREE.MeshStandardMaterial({color:0x553322,roughness:0.8}));
+    hair.position.y=1.45;g.add(hair);
+  }else{
+    // 女孩长发
+    var hair=new THREE.Mesh(new THREE.SphereGeometry(0.35,10,10,0,Math.PI*2,0,Math.PI/2),new THREE.MeshStandardMaterial({color:0x663344,roughness:0.8}));
+    hair.position.y=1.45;g.add(hair);
+    // 辫子(左右各一)
+    var braidMat=new THREE.MeshStandardMaterial({color:0x885566,roughness:0.8});
+    var braidL=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.07,0.35,6),braidMat);
+    braidL.position.set(-0.35,1.0,0.15);braidL.rotation.z=0.3;braidL.rotation.x=-0.1;g.add(braidL);
+    var braidR=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.07,0.35,6),braidMat);
+    braidR.position.set(0.35,1.0,0.15);braidR.rotation.z=-0.3;braidR.rotation.x=-0.1;g.add(braidR);
+    // 蝴蝶结发饰
+    var bowMat=new THREE.MeshStandardMaterial({color:0xff88cc,roughness:0.5});
+    [-0.24,0.24].forEach(function(bx){
+      var bow=new THREE.Mesh(new THREE.SphereGeometry(0.04,6,6),bowMat);
+      bow.position.set(bx,1.5,0.28);g.add(bow);
+    });
+  }
+  
+  // 眼睛
+  var eyeColor=isBoy?0x222222:0x552244;
+  [[-0.13,1.32,0.33],[0.13,1.32,0.33]].forEach(function(p){
+    var eyeW=new THREE.Mesh(new THREE.SphereGeometry(0.1,8,8),new THREE.MeshStandardMaterial({color:0xffffff}));
+    eyeW.position.set(p[0],p[1],p[2]);g.add(eyeW);
+    var eyeB=new THREE.Mesh(new THREE.SphereGeometry(0.055,8,8),new THREE.MeshStandardMaterial({color:eyeColor}));
+    eyeB.position.set(p[0],p[1],p[2]+0.04);g.add(eyeB);
+    var eyeH=new THREE.Mesh(new THREE.SphereGeometry(0.025,6,6),new THREE.MeshStandardMaterial({color:0xffffff}));
+    eyeH.position.set(p[0]+0.03,p[1]+0.03,p[2]+0.08);g.add(eyeH);
+  });
+  
+  // 眉毛
+  if(isBoy){
+    var browMat=new THREE.MeshStandardMaterial({color:0x553322,roughness:0.8});
+    [-0.18,0.18].forEach(function(bx){
+      var brow=new THREE.Mesh(new THREE.BoxGeometry(0.16,0.025,0.02),browMat);
+      brow.position.set(bx,1.4,0.36);g.add(brow);
+    });
+  }else{
+    var browMat2=new THREE.MeshStandardMaterial({color:0x885566,roughness:0.8});
+    [-0.18,0.18].forEach(function(bx){
+      var brow=new THREE.Mesh(new THREE.BoxGeometry(0.14,0.018,0.02),browMat2);
+      brow.position.set(bx,1.4,0.36);g.add(brow);
+    });
+  }
+  
+  // 嘴巴
+  var mouth=new THREE.Mesh(new THREE.TorusGeometry(0.05,0.015,6,12),new THREE.MeshStandardMaterial({color:0xff6666}));
+  mouth.position.set(0,1.18,0.36);mouth.rotation.x=Math.PI/2;g.add(mouth);
+  
+  // 腮红
+  [-0.2,0.2].forEach(function(x){
+    var blush=new THREE.Mesh(new THREE.SphereGeometry(0.05,6,6),new THREE.MeshBasicMaterial({color:0xffaaaa,transparent:true,opacity:0.3}));
+    blush.position.set(x,1.18,0.3);g.add(blush);
+  });
+  
+  // 帽子
+  var hat=new THREE.Mesh(new THREE.ConeGeometry(0.28,0.25,8),new THREE.MeshStandardMaterial({color:hatColor,roughness:0.6}));
+  hat.position.y=1.52;g.add(hat);
+  var hatBall=new THREE.Mesh(new THREE.SphereGeometry(0.06,6,6),new THREE.MeshStandardMaterial({color:0xffd700}));
+  hatBall.position.y=1.65;g.add(hatBall);
+  
+  // 奇奇护目镜
+  if(isBoy){
+    var goggleMat=new THREE.MeshStandardMaterial({color:0xff8800,roughness:0.3});
+    [-0.18,0.18].forEach(function(x){
+      var goggle=new THREE.Mesh(new THREE.TorusGeometry(0.09,0.025,6,12),goggleMat);
+      goggle.position.set(x,1.28,0.3);g.add(goggle);
+    });
+    var goggleBand=new THREE.Mesh(new THREE.TorusGeometry(0.2,0.02,6,12),goggleMat);
+    goggleBand.position.set(0,1.28,0.25);goggleBand.rotation.x=0.2;g.add(goggleBand);
+  }
+  
+  // 妙妙发卡+小挎包
+  if(!isBoy){
+    var clip=new THREE.Mesh(new THREE.SphereGeometry(0.04,6,6),new THREE.MeshStandardMaterial({color:0xffd700}));
+    clip.position.set(0.24,1.48,0.25);g.add(clip);
+    // 小挎包
+    var bagBody=new THREE.Mesh(new THREE.BoxGeometry(0.14,0.18,0.08),new THREE.MeshStandardMaterial({color:0x9944ff,roughness:0.6}));
+    bagBody.position.set(0.42,0.7,-0.14);g.add(bagBody);
+    var bagStrap=new THREE.Mesh(new THREE.TorusGeometry(0.36,0.012,4,12),new THREE.MeshStandardMaterial({color:0x9944ff,roughness:0.6}));
+    bagStrap.position.set(0.42,0.8,-0.12);bagStrap.rotation.x=Math.PI/2;g.add(bagStrap);
+  }
+  
+  // 左臂
+  var armMat=new THREE.MeshStandardMaterial({color:mainColor,roughness:0.5});
+  var leftArm=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.08,0.4,6),armMat);
+  leftArm.position.set(-0.45,0.7,0);leftArm.rotation.z=0.3;g.add(leftArm);
+  var handMat=new THREE.MeshStandardMaterial({color:0xffcc99,roughness:0.3});
+  var leftHand=new THREE.Mesh(new THREE.SphereGeometry(0.065,6,6),handMat);
+  leftHand.position.set(-0.53,0.48,0);g.add(leftHand);
+  
+  // 右臂
+  var rightArm=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.08,0.4,6),armMat);
+  rightArm.position.set(0.45,0.7,0);rightArm.rotation.z=-0.3;g.add(rightArm);
+  var rightHand=new THREE.Mesh(new THREE.SphereGeometry(0.065,6,6),handMat);
+  rightHand.position.set(0.53,0.48,0);g.add(rightHand);
+  
+  // =============================================
+  // 腿 - 重新设计，加长加粗，更清晰的着装风格
+  // =============================================
+  if(isBoy){
+    // 奇奇: 牛仔裤+运动鞋
+    // 大腿
+    var thighMat=new THREE.MeshStandardMaterial({color:0x4466aa,roughness:0.7});
+    var leftThigh=new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.14,0.35,8),thighMat);
+    leftThigh.position.set(-0.16,0.25,0);leftThigh.rotation.x=0.05;g.add(leftThigh);
+    var rightThigh=new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.14,0.35,8),thighMat);
+    rightThigh.position.set(0.16,0.25,0);rightThigh.rotation.x=-0.05;g.add(rightThigh);
+    // 小腿
+    var calfMat=new THREE.MeshStandardMaterial({color:0x3366aa,roughness:0.7});
+    var leftCalf=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.12,0.3,8),calfMat);
+    leftCalf.position.set(-0.16,-0.05,0.02);leftCalf.rotation.x=-0.05;g.add(leftCalf);
+    var rightCalf=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.12,0.3,8),calfMat);
+    rightCalf.position.set(0.16,-0.05,-0.02);rightCalf.rotation.x=0.05;g.add(rightCalf);
+    // 鞋子
+    var shoeMat=new THREE.MeshStandardMaterial({color:0xff6600,roughness:0.7});
+    var leftShoe=new THREE.Mesh(new THREE.SphereGeometry(0.1,8,8),shoeMat);
+    leftShoe.position.set(-0.16,-0.2,0.06);leftShoe.scale.set(1,0.7,1.3);g.add(leftShoe);
+    var rightShoe=new THREE.Mesh(new THREE.SphereGeometry(0.1,8,8),shoeMat);
+    rightShoe.position.set(0.16,-0.2,-0.02);rightShoe.scale.set(1,0.7,1.3);g.add(rightShoe);
+    // 鞋带（小装饰）
+    var laceMat=new THREE.MeshStandardMaterial({color:0xffffff,roughness:0.8});
+    var leftLace=new THREE.Mesh(new THREE.TorusGeometry(0.04,0.012,4,8),laceMat);
+    leftLace.position.set(-0.16,-0.18,0.08);leftLace.rotation.x=Math.PI/2;g.add(leftLace);
+    var rightLace=new THREE.Mesh(new THREE.TorusGeometry(0.04,0.012,4,8),laceMat);
+    rightLace.position.set(0.16,-0.18,0);rightLace.rotation.x=Math.PI/2;g.add(rightLace);
+  }else{
+    // 妙妙: 白袜+红皮鞋
+    // 大腿
+    var thighMatG=new THREE.MeshStandardMaterial({color:0xffcc99,roughness:0.3});
+    var leftThighG=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.13,0.32,8),thighMatG);
+    leftThighG.position.set(-0.16,0.25,0);g.add(leftThighG);
+    var rightThighG=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.13,0.32,8),thighMatG);
+    rightThighG.position.set(0.16,0.25,0);g.add(rightThighG);
+    // 小腿
+    var calfMatG=new THREE.MeshStandardMaterial({color:0xffcc99,roughness:0.3});
+    var leftCalfG=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.11,0.28,8),calfMatG);
+    leftCalfG.position.set(-0.16,-0.05,0.02);g.add(leftCalfG);
+    var rightCalfG=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.11,0.28,8),calfMatG);
+    rightCalfG.position.set(0.16,-0.05,-0.02);g.add(rightCalfG);
+    // 白色袜子
+    var sockMatG=new THREE.MeshStandardMaterial({color:0xffffff,roughness:0.9});
+    var leftSockG=new THREE.Mesh(new THREE.CylinderGeometry(0.105,0.09,0.12,8),sockMatG);
+    leftSockG.position.set(-0.16,-0.14,0.02);g.add(leftSockG);
+    var rightSockG=new THREE.Mesh(new THREE.CylinderGeometry(0.105,0.09,0.12,8),sockMatG);
+    rightSockG.position.set(0.16,-0.14,-0.02);g.add(rightSockG);
+    // 红皮鞋
+    var shoeMatG=new THREE.MeshStandardMaterial({color:0xcc3333,roughness:0.7});
+    var leftShoeG2=new THREE.Mesh(new THREE.SphereGeometry(0.1,8,8),shoeMatG);
+    leftShoeG2.position.set(-0.16,-0.22,0.07);leftShoeG2.scale.set(1,0.65,1.3);g.add(leftShoeG2);
+    var rightShoeG2=new THREE.Mesh(new THREE.SphereGeometry(0.1,8,8),shoeMatG);
+    rightShoeG2.position.set(0.16,-0.22,-0.03);rightShoeG2.scale.set(1,0.65,1.3);g.add(rightShoeG2);
+    // 小蝴蝶结鞋饰
+    var bowShoeMat=new THREE.MeshStandardMaterial({color:0xffd700,roughness:0.5});
+    var leftBowShoe=new THREE.Mesh(new THREE.SphereGeometry(0.025,4,4),bowShoeMat);
+    leftBowShoe.position.set(-0.16,-0.18,0.12);g.add(leftBowShoe);
+    var rightBowShoe=new THREE.Mesh(new THREE.SphereGeometry(0.025,4,4),bowShoeMat);
+    rightBowShoe.position.set(0.16,-0.18,0.02);g.add(rightBowShoe);
+  }
+  
+  g.position.set(0,groundY,-6);
+  g.userData={radius:0.4,isGrounded:true};
+  
+  // 整体放大10%
+  g.scale.set(1.1,1.1,1.1);
+  
+  scene.add(g);
+  player=g;
+}
+
+// ============================================================
+// 怪物创建 - 重新设计：独特的多眼多足"追风怪"
+// ============================================================
+function createMonster(){
+  var g=new THREE.Group();
+  
+  // === 核心身体 - 流体感球体 ===
+  var bodyMat=new THREE.MeshStandardMaterial({
+    color:0x44aaff,
+    roughness:0.6,
+    metalness:0.3,
+    emissive:0x2288dd,
+    emissiveIntensity:0.15
+  });
+  var body=new THREE.Mesh(new THREE.SphereGeometry(0.85,16,16),bodyMat);
+  body.position.y=0.8;body.castShadow=true;g.add(body);
+  
+  // 身体纹理条纹
+  var stripeMat=new THREE.MeshStandardMaterial({color:0x66ccff,roughness:0.5,transparent:true,opacity:0.3});
+  for(var si=0;si<5;si++){
+    var stripeY=0.5+si*0.15;
+    var stripe=new THREE.Mesh(new THREE.TorusGeometry(0.6+si*0.05,0.02,6,16),stripeMat);
+    stripe.position.y=stripeY;stripe.rotation.x=Math.PI/2;g.add(stripe);
+  }
+  
+  // === 多只眼睛：3只大眼环绕 ===
+  var eyeAngles=[0,Math.PI*2/3,Math.PI*4/3];
+  var eyePosY=[0.95,1.05,0.95];
+  eyeAngles.forEach(function(a,idx){
+    var ex=Math.cos(a)*0.5;
+    var ez=Math.sin(a)*0.5;
+    var ey=eyePosY[idx];
+    // 白色眼白
+    var eyeWhite=new THREE.Mesh(new THREE.SphereGeometry(0.14,8,8),new THREE.MeshStandardMaterial({color:0xffffff}));
+    eyeWhite.position.set(ex,ey,ez);g.add(eyeWhite);
+    // 瞳孔 - 竖直猫瞳
+    var pupilMat=new THREE.MeshStandardMaterial({color:0x22dd66,emissive:0x22dd66,emissiveIntensity:0.3});
+    var pupil=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.1,0.02),pupilMat);
+    pupil.position.set(ex*1.05,ey,ez*1.05);g.add(pupil);
+    // 瞳孔高光
+    var highlight=new THREE.Mesh(new THREE.SphereGeometry(0.03,6,6),new THREE.MeshBasicMaterial({color:0xffffff}));
+    highlight.position.set(ex*1.1,ey+0.04,ez*1.1);g.add(highlight);
+  });
+  
+  // === 触角 ===
+  var antennaMat=new THREE.MeshStandardMaterial({color:0x66ddff,roughness:0.5});
+  [[-0.3,1.3,0.3],[0.3,1.3,0.3]].forEach(function(p){
+    var stem=new THREE.Mesh(new THREE.CylinderGeometry(0.015,0.025,0.3,6),antennaMat);
+    stem.position.set(p[0],p[1],p[2]);stem.rotation.x=-0.3;g.add(stem);
+    var bulb=new THREE.Mesh(new THREE.SphereGeometry(0.06,6,6),new THREE.MeshStandardMaterial({color:0x88ff44,emissive:0x88ff44,emissiveIntensity:0.4}));
+    bulb.position.set(p[0]-0.05,p[1]+0.2,p[2]-0.05);g.add(bulb);
+  });
+  
+  // 嘴巴 - 波浪形
+  var mouthMat=new THREE.MeshStandardMaterial({color:0x66bbee,roughness:0.5});
+  [-0.15,0,0.15].forEach(function(ox,i){
+    var mSeg=new THREE.Mesh(new THREE.SphereGeometry(0.03,6,6),mouthMat);
+    mSeg.position.set(ox,0.55,0.75);g.add(mSeg);
+  });
+  
+  // === 六条腿 - 昆虫风格，带关节 ===
+  var legPositions=[
+    [-0.5,0.3,0.5],[-0.5,0.3,-0.5],
+    [0.5,0.3,0.5],[0.5,0.3,-0.5],
+    [-0.3,0.15,0.7],[0.3,0.15,0.7]
+  ];
+  var legMat=new THREE.MeshStandardMaterial({color:0x3388cc,roughness:0.6});
+  legPositions.forEach(function(p,idx){
+    var legGroup=new THREE.Group();
+    // 大腿
+    var upperLeg=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.06,0.25,6),legMat);
+    upperLeg.position.y=0.125;legGroup.add(upperLeg);
+    // 小腿
+    var lowerLeg=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.05,0.22,6),legMat);
+    lowerLeg.position.set(0,-0.12,-0.15);lowerLeg.rotation.x=0.5;legGroup.add(lowerLeg);
+    // 爪
+    var clawMat=new THREE.MeshStandardMaterial({color:0x66aaff,roughness:0.5});
+    var claw=new THREE.Mesh(new THREE.SphereGeometry(0.04,6,6),clawMat);
+    claw.position.set(0.02,-0.25,-0.25);legGroup.add(claw);
+    
+    legGroup.position.set(p[0],p[1],p[2]);
+    legGroup.rotation.z=idx%2===0?0.5:-0.5;
+    g.add(legGroup);
+  });
+  
+  // 尾巴 - 带尖刺
+  var tailMat2=new THREE.MeshStandardMaterial({color:0x3388cc,roughness:0.6});
+  var tailCurve=[];
+  for(var ti=0;ti<5;ti++){
+    var tPos=new THREE.Vector3(0,0.3+ti*0.12,-0.6-ti*0.15);
+    var tSeg=new THREE.Mesh(new THREE.SphereGeometry(0.05+ti*0.01,6,6),tailMat2);
+    tSeg.position.copy(tPos);g.add(tSeg);
+    // 尖刺
+    if(ti>0){
+      var spike=new THREE.Mesh(new THREE.ConeGeometry(0.025,0.08,4),new THREE.MeshStandardMaterial({color:0x88ddff}));
+      spike.position.set(0.05,0.3+ti*0.12-0.02,-0.6-ti*0.15);spike.rotation.z=0.2;g.add(spike);
+      var spike2=new THREE.Mesh(new THREE.ConeGeometry(0.025,0.08,4),new THREE.MeshStandardMaterial({color:0x88ddff}));
+      spike2.position.set(-0.05,0.3+ti*0.12-0.02,-0.6-ti*0.15);spike2.rotation.z=-0.2;g.add(spike2);
+    }
+  }
+  // 尾巴尖端光球
+  var tailTip=new THREE.Mesh(new THREE.SphereGeometry(0.06,6,6),new THREE.MeshStandardMaterial({color:0xffd700,emissive:0xffd700,emissiveIntensity:0.5}));
+  tailTip.position.set(0,0.78,-1.2);g.add(tailTip);
+  
+  // === 身体光晕 ===
+  var glowMat=new THREE.MeshBasicMaterial({
+    color:0x4488ff,
+    transparent:true,
+    opacity:0.08,
+    side:THREE.DoubleSide
+  });
+  var glowSphere=new THREE.Mesh(new THREE.SphereGeometry(1.1,12,12),glowMat);
+  glowSphere.position.y=0.8;g.add(glowSphere);
+  
+  g.position.set(0,groundY,12);
+  scene.add(g);
+  monster=g;
+  GS.monsterHp=GS.monsterMaxHp=100;
+  monster.userData={radius:0.9,active:true};
+  monster.userData.walkPhase=0;
+}
+
+// ============================================================
+// 答题点
+// ============================================================
+function spawnQuizItems(){
+  quizItems=[];
+  var count=3+Math.floor(Math.random()*2);
+  var mat=new THREE.MeshStandardMaterial({color:0xffd700,emissive:0xffd700,emissiveIntensity:0.5,transparent:true,opacity:0.8});
+  
+  for(var i=0;i<count;i++){
+    var x,y,z;
+    if(i<2){
+      x=(Math.random()-0.5)*(roomSize-8);
+      z=(Math.random()-0.5)*(roomSize-8);
+      if(Math.abs(x)<2&&Math.abs(z+6)<2)continue;
+      y=1.2;
+    }else{
+      x=(Math.random()-0.5)*(roomSize-8);
+      z=halfRoom+halfRoom-8+Math.random()*(roomSize-8);
+      y=1.2;
+    }
+    
+    var sphere=new THREE.Mesh(new THREE.SphereGeometry(0.5,12,12),mat.clone());
+    sphere.position.set(x,y,z);
+    sphere.userData={active:true,triggered:false,floatPhase:Math.random()*Math.PI*2};
+    scene.add(sphere);
+    quizItems.push(sphere);
+    
+    var glow=new THREE.Mesh(new THREE.SphereGeometry(0.85,12,12),new THREE.MeshBasicMaterial({color:0xffd700,transparent:true,opacity:0.1,side:THREE.DoubleSide}));
+    glow.position.copy(sphere.position);
+    scene.add(glow);
+  }
+}
+
+// ============================================================
+// 武器栏
+// ============================================================
+function buildWeaponBar(){
+  var bar=document.getElementById('weapon-bar');
+  bar.innerHTML='';
+  WEAPON_LIST.forEach(function(name){
+    var w=WEAPONS[name];
+    var btn=document.createElement('button');
+    btn.className='weapon-btn locked';
+    btn.innerHTML='<span class="icon">'+w.icon+'</span>'+name;
+    btn.dataset.weapon=name;
+    btn.onclick=function(){if(GS.weapons[name]&&!GS.gameOver)selectWeapon(name)};
+    bar.appendChild(btn);
+  });
+  updateWeaponBar();
+}
+
+function updateWeaponBar(){
+  var btns=document.querySelectorAll('.weapon-btn');
+  btns.forEach(function(btn){
+    var n=btn.dataset.weapon;
+    btn.className='weapon-btn'+(GS.weapons[n]?(GS.curWeapon===n?' active':''):' locked');
+  });
+  document.getElementById('weapon-label').textContent=GS.curWeapon||'无武器';
+}
+
+function selectWeapon(name){
+  GS.curWeapon=name;
+  updateWeaponBar();
+  showMessage('⚔️ 切换 '+name,0x4488ff);
+}
+
+// ============================================================
+// 跳跃系统
+// ============================================================
+function tryJump(){
+  if(GS.gameOver||!GS.running)return;
+  if(!GS.canJump)return;
+  GS.canJump=false;
+  playerVelY=5.5;
+  GS.isJumping=true;
+}
+
+function updateJump(delta){
+  if(!GS.isJumping&&GS.canJump)return;
+  
+  playerVelY+=gravity*delta;
+  player.position.y+=playerVelY*delta;
+  
+  if(player.position.y<=groundY){
+    player.position.y=groundY;
+    playerVelY=0;
+    GS.isJumping=false;
+    GS.canJump=true;
+  }
+  
+  // 在家具上着陆
+  for(var i=0;i<furniture.length;i++){
+    var f=furniture[i];
+    var dx=player.position.x-f.position.x;
+    var dz=player.position.z-f.position.z;
+    var dist=Math.sqrt(dx*dx+dz*dz);
+    if(dist<1.2&&playerVelY<0){
+      var topY=f.position.y;
+      f.children.forEach(function(child){
+        var box=child.geometry;
+        if(box&&box.parameters){
+          var h=box.parameters.height||box.parameters.radius||0;
+          if(child.position.y+h/2>topY)topY=child.position.y+h/2;
+        }
+      });
+      var platformY=f.position.y+topY||f.position.y+0.6;
+      if(player.position.y<=platformY+0.1&&player.position.y>=platformY-0.5){
+        player.position.y=platformY+0.01;
+        playerVelY=0;
+        GS.isJumping=false;
+        GS.canJump=true;
+      }
+    }
+  }
+}
+
+// ============================================================
+// 门交互
+// ============================================================
+function interactDoor(){
+  if(GS.gameOver||!GS.running)return;
+  if(isPointerLocked)return;
+  
+  var doorPos=new THREE.Vector3(0,1.5,halfRoom);
+  var dist=player.position.distanceTo(doorPos);
+  
+  if(dist<3){
+    GS.inSecondRoom=!GS.inSecondRoom;
+    if(GS.inSecondRoom){
+      player.position.set(0,groundY,halfRoom+3);
+      showMessage('🚪 进入第二房间',0x44ff88);
+    }else{
+      player.position.set(0,groundY,-3);
+      showMessage('🚪 回到主房间',0x44ff88);
+    }
+  }else{
+    showMessage('🚪 靠近门按 E 进入',0x88ccff);
+  }
+}
+
+// ============================================================
+// 技能系统
+// ============================================================
+function useSkill(){
+  if(GS.gameOver||!GS.running)return;
+  if(!GS.skillReady)return;
+  GS.skillReady=false;
+  GS.skillEnergy=0;
+  
+  var isQike=GS.character==='qike';
+  if(isQike){
+    moveSpeed=12;
+    showMessage('⚡ 疾风冲刺!',0xff8800);
+    setTimeout(function(){moveSpeed=5},800);
+  }else{
+    showMessage('🛡️ 能量护盾!',0x9944ff);
+    GS._shielded=true;
+    setTimeout(function(){GS._shielded=false},3000);
+  }
+}
+
+// ============================================================
+// 答题系统
+// ============================================================
+function showMessage(text,color){
+  var el=document.getElementById('message');
+  el.textContent=text;
+  el.style.color=color?'#'+color.toString(16).padStart(6,'0'):'#ffd700';
+  el.style.opacity='1';
+  clearTimeout(el._timeout);
+  el._timeout=setTimeout(function(){el.style.opacity='0'},1500);
+}
+
+function showQuiz(){
+  var overlay=document.getElementById('quiz-overlay');
+  if(overlay.style.display==='flex')return;
+  
+  var pool=QDB[GS.difficulty]||QDB.easy;
+  var q=pool[Math.floor(Math.random()*pool.length)];
+  GS.total++;
+  
+  overlay.style.display='flex';
+  document.getElementById('quiz-question').textContent=q.q;
+  var optContainer=document.getElementById('quiz-options');
+  optContainer.innerHTML='';
+  document.getElementById('quiz-reward').style.display='none';
+  document.getElementById('quiz-close').style.display='none';
+  
+  q.o.forEach(function(opt,i){
+    var btn=document.createElement('button');
+    btn.className='opt-btn';
+    btn.textContent=opt;
+    btn.onclick=function(){
+      if(btn.classList.contains('correct')||btn.classList.contains('wrong'))return;
+      var btns=optContainer.querySelectorAll('.opt-btn');
+      btns.forEach(function(b,i2){
+        if(i2===q.a)b.classList.add('correct');
+        else b.classList.add('wrong');
+        b.onclick=null;
+      });
+      if(i===q.a){
+        GS.correct++;
+        GS.stars+=10;
+        GS.skillEnergy=Math.min(GS.skillMax,GS.skillEnergy+25);
+        if(GS.skillEnergy>=GS.skillMax){GS.skillReady=true;showMessage('⚡ 技能已就绪! 按Q释放',0xffd700);}
+        var reward=q.reward;
+        if(reward&&!GS.weapons[reward]){
+          GS.weapons[reward]=WEAPONS[reward];
+          GS.weaponCount++;
+          if(!GS.curWeapon)GS.curWeapon=reward;
+          updateWeaponBar();
+          document.getElementById('quiz-reward').textContent='🎉 获得武器: '+WEAPONS[reward].icon+' '+reward+'!';
+          document.getElementById('quiz-reward').style.display='block';
+          showMessage('🎉 获得 '+reward+'!',0xffd700);
+          createWeaponGetEffect();
+        }else{
+          GS.stars+=5;
+          document.getElementById('quiz-reward').textContent='⭐ 答对! +15星星! 技能能量+'+GS.character==='qike'?'⚡':'🛡️';
+          document.getElementById('quiz-reward').style.display='block';
+          document.getElementById('quiz-reward').style.color='#ffd700';
+        }
+      }else{
+        document.getElementById('quiz-reward').textContent='💪 再想想哦~ 继续加油!';
+        document.getElementById('quiz-reward').style.display='block';
+        document.getElementById('quiz-reward').style.color='#88ccff';
+      }
+      document.getElementById('quiz-close').style.display='inline-block';
+      updateHUD();
+    };
+    optContainer.appendChild(btn);
+  });
+  document.getElementById('quiz-close').onclick=function(){
+    overlay.style.display='none';
+    GS.running=true;
+  };
+  GS.running=false;
+}
+
+function createWeaponGetEffect(){
+  for(var i=0;i<20;i++){
+    (function(){
+      var p=new THREE.Mesh(
+        new THREE.SphereGeometry(0.05,4,4),
+        new THREE.MeshBasicMaterial({color:[0xffd700,0xff6600,0x44ff88][Math.floor(Math.random()*3)],transparent:true,opacity:1})
+      );
+      p.position.copy(player.position);
+      p.position.y+=1.5;
+      var v=new THREE.Vector3((Math.random()-0.5)*2,Math.random()*2,(Math.random()-0.5)*2);
+      p.userData={vel:v,life:1};
+      scene.add(p);
+      projectiles.push(p);
+    })();
+  }
+}
+
+// ============================================================
+// 攻击系统
+// ============================================================
+function attack(){
+  if(attackCooldown>0||!GS.curWeapon||!GS.weapons[GS.curWeapon]||GS.gameOver||!GS.running)return;
+  attackCooldown=0.5;
+  var w=GS.weapons[GS.curWeapon];
+  var dmg=w.dmg;
+  
+  if(GS.character==='qike'&&GS.skillReady)dmg*=1.5;
+  
+  var proj=new THREE.Mesh(
+    new THREE.SphereGeometry(0.15,8,8),
+    new THREE.MeshStandardMaterial({color:w.color,emissive:w.color,emissiveIntensity:0.5})
+  );
+  proj.position.copy(player.position);
+  proj.position.y+=1;
+  
+  var dir=new THREE.Vector3(0,0,-1);
+  dir.applyQuaternion(camera.quaternion);
+  dir.y=0;dir.normalize();
+  
+  proj.userData={vel:dir.clone().multiplyScalar(15),life:2,damage:dmg};
+  scene.add(proj);
+  projectiles.push(proj);
+  
+  showMessage(WEAPONS[GS.curWeapon].icon+' 攻击!',w.color);
+}
+
+function monsterAttack(){
+  if(monsterAttackCooldown>0||GS.gameOver||!GS.running)return;
+  if(!monster.userData.active)return;
+  monsterAttackCooldown=1.5;
+  
+  var dir=new THREE.Vector3().subVectors(player.position,monster.position);
+  var dist=dir.length();
+  if(dist<3.5){
+    var dmg=10;
+    if(GS._shielded){
+      dmg=3;
+      showMessage('🛡️ 护盾格挡!',0x9944ff);
+      GS._shielded=false;
+    }
+    GS.hp-=dmg;
+    updateHUD();
+    hitFlash=0.3;
+    showMessage('💥 被击中! -'+dmg+'❤️',0xff4444);
+    var pushDir=dir.clone().normalize().multiplyScalar(-2);
+    player.position.add(pushDir);
+    clampPlayer();
+    if(GS.hp<=0){GS.hp=0;GS.gameOver=true;GS.running=false;showGameOver()}
+  }
+}
+
+function showGameOver(){
+  document.getElementById('result-title').textContent=GS.hp<=0?'😴 休息一下...':'🎉 通关成功!';
+  document.getElementById('final-stars').textContent='⭐ 收集星星: '+GS.stars;
+  document.getElementById('final-answers').textContent='✅ 答对题目: '+GS.correct+'/'+GS.total;
+  document.getElementById('final-weapons').textContent='⚔️ 获得武器: '+GS.weaponCount+'/3';
+  document.getElementById('game-over').style.display='flex';
+  if(isPointerLocked)document.exitPointerLock();
+}
+
+function gameWin(){
+  showMessage('🏆 通关成功!',0xffd700);
+  GS.gameOver=true;
+  GS.running=false;
+  document.getElementById('result-title').textContent='🎉 通关成功!';
+  document.getElementById('final-stars').textContent='⭐ 收集星星: '+GS.stars;
+  document.getElementById('final-answers').textContent='✅ 答对题目: '+GS.correct+'/'+GS.total;
+  document.getElementById('final-weapons').textContent='⚔️ 获得武器: '+GS.weaponCount+'/3';
+  document.getElementById('game-over').style.display='flex';
+  if(isPointerLocked)document.exitPointerLock();
+}
+
+function clampPlayer(){
+  var r=0.4;
+  var minZ,maxZ;
+  if(GS.inSecondRoom){
+    minZ=halfRoom+1;
+    maxZ=halfRoom*2-0.5;
+  }else{
+    minZ=-halfRoom+r;
+    maxZ=halfRoom-1;
+  }
+  player.position.x=Math.max(-halfRoom+r,Math.min(halfRoom-r,player.position.x));
+  player.position.z=Math.max(minZ,Math.min(maxZ,player.position.z));
+}
+
+// ============================================================
+// 更新循环
+// ============================================================
+function update(delta){
+  if(!GS.running||GS.gameOver)return;
+  
+  if(attackCooldown>0)attackCooldown-=delta;
+  if(monsterAttackCooldown>0)monsterAttackCooldown-=delta;
+  if(hitFlash>0)hitFlash-=delta;
+  if(monsterHitFlash>0)monsterHitFlash-=delta;
+  
+  updateJump(delta);
+  
+  // 玩家移动
+  var moveDir=new THREE.Vector3();
+  if(keys['w']||keys['arrowup'])moveDir.z-=1;
+  if(keys['s']||keys['arrowdown'])moveDir.z+=1;
+  if(keys['a']||keys['arrowleft'])moveDir.x-=1;
+  if(keys['d']||keys['arrowright'])moveDir.x+=1;
+  
+  if(moveDir.length()>0){
+    moveDir.normalize();
+    var camDir=new THREE.Vector3(0,0,-1);
+    camDir.applyQuaternion(camera.quaternion);
+    camDir.y=0;camDir.normalize();
+    var camRight=new THREE.Vector3(1,0,0);
+    camRight.applyQuaternion(camera.quaternion);
+    camRight.y=0;camRight.normalize();
+    
+    var moveVec=new THREE.Vector3();
+    moveVec.addScaledVector(camDir,-moveDir.z);
+    moveVec.addScaledVector(camRight,moveDir.x);
+    moveVec.y=0;
+    if(moveVec.length()>0){
+      moveVec.normalize().multiplyScalar(moveSpeed*delta);
+      player.position.add(moveVec);
+      clampPlayer();
+      player.rotation.y=Math.atan2(moveVec.x,moveVec.z);
+    }
+  }
+  
+  // 相机跟随
+  var camOffset=new THREE.Vector3(0,3,6);
+  var euler=new THREE.Euler(mouse.y,0,0,'YXZ');
+  var quat=new THREE.Quaternion().setFromEuler(euler);
+  var rotOffset=camOffset.clone().applyQuaternion(quat);
+  var yQuat=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),mouse.x);
+  rotOffset.applyQuaternion(yQuat);
+  
+  var targetPos=player.position.clone().add(rotOffset);
+  camera.position.lerp(targetPos,0.1);
+  camera.lookAt(player.position.x,player.position.y+1.2,player.position.z);
+  
+  // 怪物AI (只在主房间)
+  if(!GS.inSecondRoom)updateMonster(delta);
+  
+  // 答题点浮空
+  quizItems.forEach(function(item){
+    if(item.userData.active){
+      item.position.y=1.2+Math.sin(clock.elapsedTime*2+item.userData.floatPhase)*0.15;
+      item.rotation.y+=delta*0.5;
+    }
+  });
+  
+  // 投射物更新
+  for(var i=projectiles.length-1;i>=0;i--){
+    var p=projectiles[i];
+    if(!p.parent)continue;
+    p.position.add(p.userData.vel.clone().multiplyScalar(delta));
+    p.userData.life-=delta;
+    
+    if(p.userData.damage&&monster.userData.active){
+      var dist=p.position.distanceTo(monster.position);
+      if(dist<1.2){
+        GS.monsterHp-=p.userData.damage;
+        monsterHitFlash=0.2;
+        showMessage('💥 命中! -'+p.userData.damage,0x44ff88);
+        for(var j=0;j<8;j++){
+          (function(){
+            var sp=new THREE.Mesh(new THREE.SphereGeometry(0.04,4,4),new THREE.MeshBasicMaterial({color:0xffd700,transparent:true,opacity:1}));
+            sp.position.copy(p.position);
+            sp.userData={vel:new THREE.Vector3((Math.random()-0.5)*3,(Math.random()-0.5)*3,(Math.random()-0.5)*3),life:0.5};
+            scene.add(sp);
+            projectiles.push(sp);
+          })();
+        }
+        scene.remove(p);
+        projectiles.splice(i,1);
+        updateHUD();
+        if(GS.monsterHp<=0){
+          GS.monsterHp=0;
+          monster.userData.active=false;
+          showMessage('🎉 追风怪逃跑了!',0x44ff88);
+          GS.stars+=50;
+          updateHUD();
+          var escapeInterval=setInterval(function(){
+            if(!monster.parent)return clearInterval(escapeInterval);
+            monster.position.y+=0.3;
+            monster.position.x+=Math.sin(clock.elapsedTime*5)*0.2;
+            monster.rotation.x+=0.1;
+            monster.rotation.z+=0.08;
+            if(monster.position.y>8){
+              clearInterval(escapeInterval);
+              scene.remove(monster);
+              gameWin();
+            }
+          },50);
+        }
+        continue;
+      }
+    }
+    
+    if(p.userData.life<=0){
+      scene.remove(p);
+      projectiles.splice(i,1);
+    }
+  }
+  
+  // 答题点靠近检测
+  quizItems.forEach(function(item){
+    if(item.userData.active&&!item.userData.triggered){
+      var dist=player.position.distanceTo(item.position);
+      if(dist<1.8){
+        item.userData.triggered=true;
+        item.userData.active=false;
+        item.material.transparent=true;
+        item.material.opacity=0.2;
+        showQuiz();
+      }
+    }
+  });
+  
+  // 怪物靠近攻击
+  if(!GS.inSecondRoom&&monster.userData.active){
+    var mDist=monster.position.distanceTo(player.position);
+    if(mDist<3.5)monsterAttack();
+  }
+  
+  // 受击闪红
+  if(hitFlash>0){
+    document.body.style.backgroundColor='rgba(255,0,0,0.1)';
+  }else{
+    document.body.style.backgroundColor='';
+  }
+  
+  updateMinimap();
+}
+
+function updateMonster(delta){
+  if(GS.inSecondRoom)return;
+  if(!monster.userData.active)return;
+  
+  var dir=new THREE.Vector3().subVectors(player.position,monster.position);
+  var dist=dir.length();
+  dir.y=0;
+  
+  if(dist>2.5&&dist<18){
+    var speed=2+GS.stars*0.01;
+    speed=Math.min(speed,4);
+    var move=dir.clone().normalize().multiplyScalar(speed*delta);
+    monster.position.add(move);
+    monster.rotation.y=Math.atan2(move.x,move.z);
+    
+    // 走路动画 - 身体有节奏起伏
+    monster.userData.walkPhase+=delta*speed*3;
+    monster.position.y=groundY+Math.abs(Math.sin(monster.userData.walkPhase))*0.08;
+  }
+  
+  // 触角/眼睛发光动画
+  monster.children.forEach(function(child,i){
+    if(child.isMesh&&child.material){
+      if(child.material.emissive){
+        child.material.emissiveIntensity=0.1+Math.sin(clock.elapsedTime*2+i)*0.08;
+      }
+    }
+  });
+  
+  // 怪物身体整体呼吸
+  if(monster.children[0]&&monster.children[0].geometry&&monster.children[0].geometry.type==='SphereGeometry'){
+    var breathe=1+Math.sin(clock.elapsedTime*1.2)*0.03;
+    monster.children[0].scale.setScalar(breathe);
+  }
+  
+  // 受击闪烁
+  if(monsterHitFlash>0){
+    monster.children.forEach(function(child){
+      if(child.isMesh&&child.material.emissiveIntensity!==undefined){
+        child.material.emissiveIntensity=0.8;
+      }
+    });
+  }else{
+    // 恢复
+    for(var ci=0;ci<monster.children.length;ci++){
+      var child=monster.children[ci];
+      if(child.isMesh&&child.material.emissiveIntensity!==undefined&&child.material.emissiveIntensity>0.5){
+        child.material.emissiveIntensity=0.15;
+      }
+    }
+  }
+}
+
+// ============================================================
+// HUD & 小地图
+// ============================================================
+function updateHUD(){
+  document.getElementById('hp-text').textContent=GS.hp;
+  document.getElementById('hp-fill').style.width=(GS.hp/GS.maxHp*100)+'%';
+  document.getElementById('star-text').textContent=GS.stars;
+  document.getElementById('monster-hp-fill').style.width=(GS.monsterHp/GS.monsterMaxHp*100)+'%';
+}
+
+function updateMinimap(){
+  var canvas=document.getElementById('minimap-canvas');
+  if(!canvas)return;
+  var ctx=canvas.getContext('2d');
+  var w=80,h=80;
+  ctx.fillStyle='rgba(0,3,0,0.5)';
+  ctx.fillRect(0,0,w,h);
+  
+  var totalZ=halfRoom*2+halfRoom;
+  var totalX=halfRoom*2;
+  var scale=Math.min(w/totalX,h/totalZ)*0.9;
+  var offsetX=w/2;
+  var offsetZ=h-totalZ*scale/2-5;
+  
+  ctx.strokeStyle='rgba(255,255,255,0.2)';
+  ctx.lineWidth=1;
+  ctx.strokeRect(offsetX-halfRoom*scale,offsetZ-halfRoom*scale,halfRoom*2*scale,halfRoom*2*scale);
+  ctx.strokeRect(offsetX-halfRoom*scale,offsetZ+halfRoom*scale,halfRoom*2*scale,halfRoom*2*scale);
+  
+  ctx.fillStyle='rgba(68,255,136,0.3)';
+  ctx.fillRect(offsetX-0.5*scale,offsetZ+halfRoom*scale-2,1*scale,4);
+  
+  quizItems.forEach(function(item){
+    if(item.userData.active){
+      var ix=offsetX+item.position.x*scale;
+      var iz=offsetZ+item.position.z*scale;
+      ctx.fillStyle='#ffd700';
+      ctx.beginPath();
+      ctx.arc(ix,iz,2.5,0,Math.PI*2);
+      ctx.fill();
+    }
+  });
+  
+  if(monster&&monster.userData.active){
+    var mx=offsetX+monster.position.x*scale;
+    var mz=offsetZ+monster.position.z*scale;
+    ctx.fillStyle='#ff4444';
+    ctx.beginPath();
+    ctx.arc(mx,mz,3,0,Math.PI*2);
+    ctx.fill();
+  }
+  
+  var cx=offsetX+player.position.x*scale;
+  var cz=offsetZ+player.position.z*scale;
+  ctx.fillStyle='#44ff88';
+  ctx.beginPath();
+  ctx.arc(cx,cz,3,0,Math.PI*2);
+  ctx.fill();
+  
+  var angle=player.rotation.y;
+  ctx.strokeStyle='#44ff88';
+  ctx.lineWidth=1;
+  ctx.beginPath();
+  ctx.moveTo(cx,cz);
+  ctx.lineTo(cx+Math.sin(angle)*8,cz+Math.cos(angle)*8);
+  ctx.stroke();
+}
+
+// ============================================================
+// 动画循环
+// ============================================================
+function animate(){
+  requestAnimationFrame(animate);
+  var delta=Math.min(clock.getDelta(),0.05);
+  update(delta);
+  renderer.render(scene,camera);
+}
+
+// ============================================================
+// 启动
+// ============================================================
+// 绘制角色头像: 奇奇(男孩) / 妙妙(女孩)
+drawAvatar('avatar-qike','boy','#ff8800','#ff6600');
+drawAvatar('avatar-miaomiao','girl','#cc77ff','#9944ff');
+
+// 隐藏加载界面，显示角色选择
+document.getElementById('loading').style.display='none';
+
+// PWA: 注册 Service Worker
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js').then(function(reg){
+    console.log('SW registered:', reg.scope);
+  }).catch(function(err){
+    console.log('SW registration failed:', err);
+  });
+}
+</script>
+</body>
+</html>
