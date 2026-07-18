@@ -14,6 +14,9 @@ export class DifficultySelectScene extends Phaser.Scene {
         // 创建难度选择UI
         this.createDifficultySelection();
 
+        // 创建返回按钮
+        this.createBackButton();
+
         // 创建音效
         this.createSounds();
     }
@@ -131,6 +134,35 @@ export class DifficultySelectScene extends Phaser.Scene {
     createSounds() {
         // 创建音效
         this.clickSound = this.sound.add('click');
+    }
+
+    createBackButton() {
+        // 创建返回按钮
+        const backBtn = this.add.text(60, 50, '← 返回', {
+            fontFamily: 'Arial',
+            fontSize: '28px',
+            color: '#ffffff',
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            padding: { x: 15, y: 8 }
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+        backBtn.on('pointerdown', () => {
+            // 播放点击音效
+            if (window.gameState.isSoundOn && this.clickSound) {
+                this.clickSound.play();
+            }
+            // 返回角色选择场景
+            this.scene.start('CharacterSelectScene');
+        });
+
+        // 悬停效果
+        backBtn.on('pointerover', () => {
+            backBtn.setColor('#ffff00');
+        });
+
+        backBtn.on('pointerout', () => {
+            backBtn.setColor('#ffffff');
+        });
     }
 
     selectDifficulty(difficulty) {

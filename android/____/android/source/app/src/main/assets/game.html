@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="icons/icon-192.svg" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="奇迹森林" />
+  <title>奇迹森林大冒险</title>
+  <link rel="stylesheet" href="src/styles/game.css" />
+</head>
+
+<body>
+
+  <!-- 加载 -->
+  <div id="loading">
+    <div class="spinner"></div>奇迹森林大冒险<br><span style="font-size:14px;color:#aaa;margin-top:10px">正在加载...</span>
+  </div>
+
+  <!-- 角色选择 -->
+  <div id="char-select">
+    <h1>🌟 奇迹森林大冒险</h1>
+    <div class="subtitle">选择你的冒险伙伴</div>
+    <div class="char-grid">
+      <div class="char-card char-qike" onclick="selectCharacter('qike')">
+        <div class="avatar"><canvas id="avatar-qike" width="120" height="140"></canvas></div>
+        <div class="name">奇奇 👦</div>
+        <div class="tagline">勇敢的小男孩探险家</div>
+        <div class="skill-tag">⚡ 疾风冲刺</div>
+        <div class="skill-desc">答题或打怪攒能量，按Q释放提升速度+连击伤害</div>
+      </div>
+      <div class="char-card char-miaomiao" onclick="selectCharacter('miaomiao')">
+        <div class="avatar"><canvas id="avatar-miaomiao" width="120" height="140"></canvas></div>
+        <div class="name">妙妙 👧</div>
+        <div class="tagline">聪明的小女孩发明家</div>
+        <div class="skill-tag">🛡️ 能量护盾</div>
+        <div class="skill-desc">答题或打怪攒能量，按Q释放护盾格挡伤害</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 难度选择 -->
+  <div id="diff-select" class="hidden">
+    <button class="back-btn" onclick="backToCharSelect()">← 返回</button>
+    <h1>🎯 选择难度</h1>
+    <div class="subtitle">你想挑战哪片森林呢？</div>
+    <div class="diff-grid">
+      <div class="diff-card" onclick="selectDifficulty('easy')">
+        <span class="icon">🌱</span>
+        <div class="label">初级</div>
+        <div class="desc">学前班~一年级<br>简单有趣</div>
+        <div class="age">适合 5-6 岁</div>
+      </div>
+      <div class="diff-card" onclick="selectDifficulty('medium')">
+        <span class="icon">🌿</span>
+        <div class="label">中级</div>
+        <div class="desc">二年级~三年级<br>更多挑战</div>
+        <div class="age">适合 7-8 岁</div>
+      </div>
+      <div class="diff-card" onclick="selectDifficulty('hard')">
+        <span class="icon">🌳</span>
+        <div class="label">高级</div>
+        <div class="desc">四年级~五年级<br>最强考验</div>
+        <div class="age">适合 9-10 岁</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 章节选择 -->
+  <div id="chapter-select" class="hidden">
+    <button class="back-btn" onclick="backToDiffSelect()">← 返回</button>
+    <h1>🗺️ 选择章节</h1>
+    <div class="subtitle">踏上奇迹森林的冒险之旅</div>
+    <div class="chapter-grid" id="chapter-grid"></div>
+  </div>
+
+  <!-- 倒计时覆盖层 (默认隐藏) -->
+  <div id="countdown-overlay" class="hidden">
+    <div id="countdown-number">5</div>
+    <div id="countdown-text">准备开始...</div>
+  </div>
+
+  <!-- 游戏 HUD (默认隐藏，游戏开始时显示) -->
+  <div id="hud" class="hidden">
+    <div id="hud-left">
+      <div class="hud-item">
+        <div class="label">❤️ 生命</div>
+        <div class="value" id="hp-text">100</div>
+        <div class="hp-bar">
+          <div class="hp-fill" id="hp-fill" style="width:100%"></div>
+        </div>
+      </div>
+      <div class="hud-item">
+        <div class="label">🔋 能量</div>
+        <div class="value" id="energy-text" style="color:#66ffcc">0/5</div>
+        <div class="energy-bar">
+          <div class="energy-fill" id="energy-fill" style="width:0%"></div>
+        </div>
+        <div class="energy-sub" id="energy-sub">🔹 碎片: 0/2</div>
+      </div>
+      <div class="hud-item">
+        <div class="label">🎯 角色</div>
+        <div class="value" id="char-name">奇奇</div>
+        <div class="level-text" id="level-text">Lv.1</div>
+      </div>
+    </div>
+    <div id="hud-right">
+      <button class="back-btn" onclick="backToMainMenu()" id="hud-back-btn" title="退出游戏">← 退出</button>
+    </div>
+  </div>
+
+  <!-- 技能状态栏 -->
+  <div id="skill-bar">
+    <div class="skill-label">✨ 技能</div>
+    <div class="skill-status" id="skill-status">就绪</div>
+    <div class="skill-cd-bar" id="skill-cd-bar">
+      <div class="skill-cd-fill" id="skill-cd-fill" style="width:100%"></div>
+    </div>
+    <div class="skill-cd-text" id="skill-cd-text"></div>
+  </div>
+
+  <div id="buff-bar">
+    <div class="buff-label">✨ 增益</div>
+    <div class="buff-icons" id="buff-icons"></div>
+  </div>
+
+  <div id="monster-hp">
+    <div class="label">👾 追风怪</div>
+    <div id="monster-hp-bar">
+      <div id="monster-hp-fill" style="width:100%"></div>
+    </div>
+  </div>
+
+  <div id="weapon-bar-wrap">
+    <div id="weapon-bar"></div>
+  </div>
+
+  <div id="message"></div>
+
+  <div id="minimap"><canvas id="minimap-canvas" width="120" height="120"></canvas></div>
+
+  <!-- 移动端触屏控制层 -->
+  <div id="touch-controls">
+    <div id="touch-look-zone"></div>
+    <div id="joystick-zone">
+      <div id="joystick-knob"></div>
+    </div>
+    <div id="buttons-zone">
+      <button class="touch-btn" id="btn-skill"><span class="icon">✨</span>技能</button>
+      <button class="touch-btn" id="btn-jump"><span class="icon">⬆️</span>跳跃</button>
+      <button class="touch-btn" id="btn-attack"><span class="icon">⚔️</span>攻击</button>
+    </div>
+  </div>
+
+  <!-- 音频元素 -->
+  <audio id="bgm" loop>
+    <source src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=" type="audio/wav">
+  </audio>
+  <audio id="sfx-quiz"></audio>
+  <audio id="sfx-attack"></audio>
+  <audio id="sfx-hit"></audio>
+  <audio id="sfx-skill"></audio>
+  <audio id="sfx-hurt"></audio>
+
+  <!-- 答题弹窗 -->
+  <div id="quiz-overlay">
+    <div id="quiz-box">
+      <div id="quiz-question"></div>
+      <div id="quiz-options"></div>
+      <div id="quiz-reward"></div>
+      <button id="quiz-close">继续冒险</button>
+    </div>
+  </div>
+
+  <!-- 结算 -->
+  <div id="game-over">
+    <div id="game-over-box">
+      <h2 id="result-title">🎉 通关成功!</h2>
+      <p id="final-answers"></p>
+      <p id="final-weapons"></p>
+      <div style="display:flex;gap:10px;margin-top:20px;justify-content:center;flex-wrap:wrap">
+        <button id="next-chapter-btn" onclick="nextChapter()"
+          style="padding:12px 30px;border:none;border-radius:10px;background:linear-gradient(135deg,#44ff88,#44dd66);color:#000;font-size:16px;font-weight:bold;cursor:pointer">➡️
+          下一章节</button>
+        <button id="restart-btn" onclick="location.reload()"
+          style="padding:12px 30px;border:none;border-radius:10px;background:linear-gradient(135deg,#ffd700,#ff8800);color:#000;font-size:16px;font-weight:bold;cursor:pointer">🔄
+          重新选择</button>
+        <button id="back-to-menu-btn" onclick="backToMainMenu()"
+          style="padding:12px 30px;border:none;border-radius:10px;background:linear-gradient(135deg,#8888ff,#6644cc);color:#fff;font-size:16px;font-weight:bold;cursor:pointer">🏠
+          返回主页</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 立即隐藏加载界面（在Three.js加载前）
+    document.getElementById('loading').style.display = 'none';
+  </script>
+
+  <style>
+    /* 让 #hud 支持 hidden 类 */
+    #hud.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+  </style>
+
+  <!-- Three.js -->
+  <script src="src/assets/three.min.js"></script>
+
+  <!-- 游戏数据 -->
+  <script src="src/scripts/game-data.js"></script>
+
+  <!-- 游戏状态管理 -->
+  <script src="src/scripts/game-state.js"></script>
+
+  <!-- 音频系统 -->
+  <script src="src/scripts/game-audio.js"></script>
+
+  <!-- 角色创建 -->
+  <script src="src/scripts/game-characters.js"></script>
+
+  <!-- 怪物系统 -->
+  <script src="src/scripts/game-monsters.js"></script>
+
+  <!-- 答题系统 -->
+  <script src="src/scripts/game-quiz.js"></script>
+  <!-- 攻击和技能系统 -->
+  <script src="src/scripts/game-combat.js"></script>
+
+  <!-- 触摸控制 -->
+  <script src="src/scripts/game-touch.js"></script>
+
+  <!-- 主入口和更新循环 -->
+  <script src="src/scripts/game-main.js"></script>
+
+  <!-- Three.js场景建造（依赖main中的animate） -->
+  <script src="src/scripts/game-scene.js"></script>
+
+  <script>
+    // ============================================================
+    // 启动
+    // ============================================================
+    // 绘制角色头像: 奇奇(男孩) / 妙妙(女孩)
+    drawAvatar('avatar-qike', 'boy', '#ff8800', '#ff6600');
+    drawAvatar('avatar-miaomiao', 'girl', '#cc77ff', '#9944ff');
+
+    // 隐藏加载界面，显示角色选择
+    document.getElementById('loading').style.display = 'none';
+
+    // PWA: 注册 Service Worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').then(function (reg) {
+        console.log('SW registered:', reg.scope);
+      }).catch(function (err) {
+        console.log('SW registration failed:', err);
+      });
+    }
+  </script>
+</body>
+
+</html>

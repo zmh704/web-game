@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#16213e"/>
+    </linearGradient>
+  </defs>
+  <rect width="192" height="192" rx="32" fill="url(#bg)"/>
+  <!-- 星星 -->
+  <polygon points="96,36 108,72 146,72 115,94 125,132 96,110 67,132 77,94 46,72 84,72" fill="#ffd700"/>
+  <!-- 星星光晕 -->
+  <polygon points="96,44 104,70 134,70 109,87 117,118 96,100 75,118 83,87 58,70 88,70" fill="rgba(255,215,0,0.3)"/>
+  <!-- 书 -->
+  <rect x="72" y="134" width="48" height="6" rx="2" fill="#4488ff"/>
+  <rect x="76" y="140" width="40" height="4" rx="1.5" fill="#4488ff"/>
+  <!-- 装饰小点 -->
+  <circle cx="48" cy="48" r="3" fill="rgba(255,215,0,0.5)"/>
+  <circle cx="144" cy="48" r="3" fill="rgba(255,215,0,0.5)"/>
+  <circle cx="48" cy="144" r="3" fill="rgba(255,215,0,0.5)"/>
+  <circle cx="144" cy="144" r="3" fill="rgba(255,215,0,0.5)"/>
+</svg>

@@ -1,6 +1,24 @@
+# Dependencies
 node_modules/
+
+# OS files
 .DS_Store
 Thumbs.db
+
+# Logs
 *.log
+
+# Environment
 .env
-android-pwa/
+
+# IDE
+.vscode/
+
+# Android build outputs
+android/____/android/source/.gradle/
+android/____/android/source/app/build/
+android/____/android/source/gradle-4.6-all.zip
+android/____/android/source/local.properties
+
+# APK files
+*.apk
