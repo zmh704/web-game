@@ -27,7 +27,7 @@ var GS = {
   skillReady: true,
   skillCooldown: 0,   // 技能冷却剩余时间(秒)
   skillActive: 0,     // 技能持续剩余时间(秒)
-  skillDuration: 10,  // 技能持续总时长(秒)
+  skillDuration: 3,   // 技能持续总时长(秒)
   skillCooldownTime: 20, // 技能冷却总时长(秒)
   // 道具系统：玩家属性加成
   moveSpeedBonus: 0,      // 急速之靴增加的移动速度
@@ -42,8 +42,8 @@ var GS = {
   levelDefBonus: 0,         // 等级增加的防御
   levelSpeedBonus: 0,       // 等级增加的速度
   usedQuestions: null,       // 已用题目索引（每局重置）
-  // 开局倒计时
-  countdown: 5              // 5秒倒计时
+  hasFlashlight: false,      // 是否拥有手电筒
+  weaponAmmo: {}             // 武器弹药数
 };
 
 // ============================================================
@@ -106,7 +106,7 @@ function gainEnergy(n) {
   updateHUD();
   if (GS.energy >= max) {
     showMessage('🚀 能量集满! 快回飞船起飞!', 0x66ffcc);
-    // 能量已满，移除场上的能量球
+    // 能量已满，移除场上的金色宝箱
     if (typeof energyOrb !== 'undefined' && energyOrb) {
       try { scene.remove(energyOrb); } catch (e) { }
       energyOrb = null;
@@ -236,7 +236,12 @@ function selectChapter(id) {
   GS.hp = GS.maxHp = 100;
   GS.stars = 0;
   GS.weapons = {};
+  GS.weaponAmmo = {};
   GS.curWeapon = null;
+  // 默认武器：木棍（无限使用，伤害最低）
+  GS.weapons['木棍'] = WEAPONS['木棍'];
+  GS.weaponAmmo['木棍'] = Infinity;
+  GS.curWeapon = '木棍';
   GS.correct = 0; GS.total = 0;
   GS.weaponCount = 0;
   GS.energy = 0;
@@ -259,8 +264,7 @@ function selectChapter(id) {
   GS.killCount = 0;
   GS.level = 1;
   GS.usedQuestions = {};
-  // 重置倒计时
-  GS.countdown = 5;
+  GS.hasFlashlight = false;
   document.getElementById('chapter-select').classList.add('hidden');
   // 初始化技能UI
   updateSkillHUD();
@@ -274,6 +278,7 @@ function backToMainMenu() {
   // 退出游戏回到主菜单（任何状态下都可以退出）
   GS.running = false;
   GS.gameOver = false;
+  try { localStorage.removeItem('miracleForest_pending'); } catch (e) { }
   if (typeof isPointerLocked !== 'undefined' && isPointerLocked) {
     try { document.exitPointerLock(); } catch (e) { }
   }

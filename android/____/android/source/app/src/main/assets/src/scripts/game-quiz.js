@@ -69,7 +69,7 @@ function showQuiz() {
         GS.correct++;
         AudioMgr.playQuiz();
         GS.stars += 10;
-        // 解锁能量球时，同一房间内的怪物被激怒并攻击角色
+        // 解锁金色宝箱时，同一房间内的怪物被激怒并攻击角色
         var playerRoom = roomIndexOf(player.position.x, player.position.z);
         var activeMonsters = (window.monsters || []).concat(window.bosses || []);
         for (var agIdx = 0; agIdx < activeMonsters.length; agIdx++) {
@@ -81,11 +81,14 @@ function showQuiz() {
             agM.userData.lastAttackedTime = clock.elapsedTime;
           }
         }
-        var lockedW = WEAPON_LIST.filter(function (n) { return !GS.weapons[n] });
+        // 开箱惊醒睡眠中的Boss（无论Boss在哪个房间）
+        if (typeof wakeAllBosses === 'function') wakeAllBosses();
+        var lockedW = REWARD_WEAPON_LIST.filter(function (n) { return !GS.weapons[n] });
         var rewardText = '';
         if (lockedW.length > 0) {
           var wn = lockedW[Math.floor(Math.random() * lockedW.length)];
           GS.weapons[wn] = WEAPONS[wn];
+          GS.weaponAmmo[wn] = WEAPONS[wn].type === 'rope' ? 1 : 20;
           GS.weaponCount++;
           if (!GS.curWeapon) GS.curWeapon = wn;
           updateWeaponBar();
@@ -96,9 +99,10 @@ function showQuiz() {
           rewardText = '⭐ 星星+10';
         }
         consumeEnergyOrb();
-        // 能量直接计入（gainEnergy内部处理升级和集满提示）
-        gainEnergy(1);
-        document.getElementById('quiz-reward').textContent = charName + '，你好棒！回答正确！获得奖励：🔋能量+1 (' + GS.energy + '/' + (GS.energyMax || 5) + ')  ' + rewardText;
+        // 打开金色宝箱：随机获得3-5个能量碎片
+        var fragCount = 3 + Math.floor(Math.random() * 3);
+        for (var fi = 0; fi < fragCount; fi++) gainFragment();
+        document.getElementById('quiz-reward').textContent = charName + '，你好棒！回答正确！打开宝箱获得：💠能量碎片x' + fragCount + '  ' + rewardText;
         document.getElementById('quiz-reward').style.display = 'block';
         document.getElementById('quiz-reward').style.color = '#44ff88';
       } else {

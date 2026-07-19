@@ -19,26 +19,94 @@ function buildMonsterMesh(t) {
     stripe.position.y = 0.5 + si * 0.15; stripe.rotation.x = Math.PI / 2; g.add(stripe);
   }
 
+  // 恐怖大眼睛：更大、更红、更亮，带血丝和怒眉
   var eyeCount = t.eyes || 2;
   for (var ei = 0; ei < eyeCount; ei++) {
     var a = (ei - (eyeCount - 1) / 2) * 0.55;
     var ex = Math.sin(a) * 0.55;
     var ez = Math.cos(a) * 0.55;
     var ey = 0.9 + (ei % 3) * 0.1;
-    var eyeWhite = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 8), new THREE.MeshStandardMaterial({ color: 0xddbbbb }));
+    // 眼白（更大，偏黄）
+    var eyeWhite = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 10), new THREE.MeshStandardMaterial({ color: 0xeeddbb }));
     eyeWhite.position.set(ex, ey, ez); g.add(eyeWhite);
-    var pupilMat = new THREE.MeshStandardMaterial({ color: 0xff0000, emissive: 0xff0000, emissiveIntensity: 0.6 });
-    var pupil = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.08, 0.02), pupilMat);
-    pupil.position.set(ex * 1.05, ey, ez * 1.05); g.add(pupil);
-    var highlight = new THREE.Mesh(new THREE.SphereGeometry(0.025, 6, 6), new THREE.MeshBasicMaterial({ color: 0xff6666 }));
-    highlight.position.set(ex * 1.1, ey + 0.03, ez * 1.1); g.add(highlight);
-    for (var vs = 0; vs < 2; vs++) {
-      var vein = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.06, 0.01), new THREE.MeshBasicMaterial({ color: 0xcc3333, transparent: true, opacity: 0.5 }));
-      vein.position.set(ex + ((Math.random() - 0.5) * 0.12), ey + 0.03 + Math.random() * 0.08, ez * 1.08);
-      vein.rotation.z = (Math.random() - 0.5) * 0.4;
+    // 瞳孔（血红大瞳孔，发光）
+    var pupilMat = new THREE.MeshStandardMaterial({ color: 0xff2200, emissive: 0xff0000, emissiveIntensity: 0.9 });
+    var pupil = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), pupilMat);
+    pupil.position.set(ex * 1.05, ey, ez * 1.08); g.add(pupil);
+    // 瞳孔中心黑点
+    var core = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    core.position.set(ex * 1.05, ey, ez * 1.12); g.add(core);
+    // 高光反射
+    var highlight = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 6), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    highlight.position.set(ex * 1.1, ey + 0.05, ez * 1.1); g.add(highlight);
+    // 血丝（多条红色细线环绕）
+    for (var vs = 0; vs < 4; vs++) {
+      var vein = new THREE.Mesh(new THREE.BoxGeometry(0.005, 0.08, 0.005), new THREE.MeshBasicMaterial({ color: 0xcc2222, transparent: true, opacity: 0.6 }));
+      var angle = Math.random() * Math.PI * 2;
+      var radius = 0.15 + Math.random() * 0.08;
+      vein.position.set(ex + Math.cos(angle) * radius, ey + Math.sin(angle) * radius * 0.6, ez * 1.05);
+      vein.rotation.z = (Math.random() - 0.5) * 0.6;
       g.add(vein);
     }
+    // 怒眉（斜向下压的深色眉骨）
+    var browMat = new THREE.MeshStandardMaterial({ color: 0x220000, roughness: 0.8 });
+    var brow = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.04, 0.06), browMat);
+    brow.position.set(ex, ey + 0.22, ez * 1.05);
+    brow.rotation.x = -0.3;
+    brow.rotation.z = ei === 0 ? 0.35 : -0.35; // 八字怒眉向内倾斜
+    g.add(brow);
   }
+  // 额外：第三只竖眼（Boss专属或随机）
+  if (t.eyes > 2 || Math.random() > 0.5) {
+    var thirdEye = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8), new THREE.MeshStandardMaterial({ color: 0xff4400, emissive: 0xff2200, emissiveIntensity: 0.8 }));
+    thirdEye.position.set(0, 1.25, 0.6);
+    g.add(thirdEye);
+    var thirdPupil = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    thirdPupil.position.set(0, 1.25, 0.68);
+    g.add(thirdPupil);
+  }
+  // 龇牙咧嘴的大嘴巴：横向裂开 + 尖牙
+  var mouthMat = new THREE.MeshBasicMaterial({ color: 0x110000 });
+  var mouth = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 8), mouthMat);
+  mouth.position.set(0, 0.55, 0.75);
+  mouth.scale.set(1.0, 0.4, 0.5);
+  g.add(mouth);
+  // 牙龈
+  var gumMat = new THREE.MeshStandardMaterial({ color: 0x661111, roughness: 0.7 });
+  var gum = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), gumMat);
+  gum.position.set(0, 0.55, 0.82);
+  gum.scale.set(0.9, 0.25, 0.3);
+  g.add(gum);
+  // 上排尖牙
+  var toothMat = new THREE.MeshStandardMaterial({ color: 0xffeecc, roughness: 0.2, emissive: 0x442211, emissiveIntensity: 0.05 });
+  for (var ti = 0; ti < 6; ti++) {
+    var tx = -0.25 + ti * 0.1;
+    var tooth = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.12, 4), toothMat);
+    tooth.position.set(tx, 0.62, 0.85);
+    tooth.rotation.x = 0.2;
+    tooth.rotation.z = (ti % 2 === 0) ? 0.1 : -0.1;
+    g.add(tooth);
+    // 下排尖牙（交错排列）
+    var lowerTooth = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.1, 4), toothMat);
+    lowerTooth.position.set(tx + 0.05, 0.48, 0.85);
+    lowerTooth.rotation.x = -0.2;
+    lowerTooth.rotation.z = (ti % 2 === 0) ? -0.1 : 0.1;
+    g.add(lowerTooth);
+  }
+  // 两侧獠牙（更长更尖）
+  var fangBigMat = new THREE.MeshStandardMaterial({ color: 0xeeddcc, roughness: 0.15, emissive: 0x553322, emissiveIntensity: 0.05 });
+  [-0.32, 0.32].forEach(function (fx) {
+    var fang = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.2, 4), fangBigMat);
+    fang.position.set(fx, 0.52, 0.85);
+    fang.rotation.x = 0.5;
+    fang.rotation.z = fx * 3;
+    g.add(fang);
+    var lowerFang = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.18, 4), fangBigMat);
+    lowerFang.position.set(fx, 0.44, 0.85);
+    lowerFang.rotation.x = -0.5;
+    lowerFang.rotation.z = fx * 3;
+    g.add(lowerFang);
+  });
 
   if (t.fangs) {
     var mMat = new THREE.MeshStandardMaterial({ color: 0x440000, roughness: 0.9 });
@@ -148,15 +216,22 @@ var fragmentDrops = [];
 function spawnFragmentDrop(pos) {
   var g = new THREE.Group();
   var core = new THREE.Mesh(
-    new THREE.OctahedronGeometry(0.22),
-    new THREE.MeshStandardMaterial({ color: 0x44ddff, emissive: 0x44ddff, emissiveIntensity: 0.7, transparent: true, opacity: 0.9 })
+    new THREE.OctahedronGeometry(0.25),
+    new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xffd700, emissiveIntensity: 0.9, transparent: true, opacity: 0.95 })
   );
   g.add(core);
-  var glow = new THREE.Mesh(
-    new THREE.SphereGeometry(0.4, 8, 8),
-    new THREE.MeshBasicMaterial({ color: 0x44ddff, transparent: true, opacity: 0.15, side: THREE.DoubleSide })
+  // 内层发光
+  var innerGlow = new THREE.Mesh(
+    new THREE.SphereGeometry(0.35, 8, 8),
+    new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.25, side: THREE.DoubleSide })
   );
-  g.add(glow);
+  g.add(innerGlow);
+  // 外层大光晕
+  var outerGlow = new THREE.Mesh(
+    new THREE.SphereGeometry(0.55, 8, 8),
+    new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.1, side: THREE.DoubleSide })
+  );
+  g.add(outerGlow);
   g.position.set(pos.x, 0.8, pos.z);
   g.userData = { floatPhase: Math.random() * Math.PI * 2 };
   scene.add(g);
@@ -188,13 +263,22 @@ function onMonsterDefeated(m) {
   GS.killCount = (GS.killCount || 0) + 1;
 
   if (isBoss) {
-    // Boss一次性击杀：直接获得1点能量，不再复活
-    showMessage('🏆 击败了 ' + m.userData.type.name + '! 获得能量!', 0xffd700);
+    // Boss击杀：直接获得1点能量，掉落2个碎片，10秒后刷新
+    showMessage('🏆 击败了 ' + m.userData.type.name + '! 获得能量+2碎片!', 0xffd700);
     gainEnergy(1);
+    // Boss掉落2个碎片
+    spawnFragmentDrop(m.position.clone());
+    spawnFragmentDrop(m.position.clone());
+    // Boss 10秒后刷新到能量球所在房间
+    m.userData.respawnTimer = 10;
+    m.userData.deathTime = clock.elapsedTime;
   } else {
-    // 小怪：死亡位置掉落能量碎片
+    // 小怪：死亡位置掉落能量碎片，立即刷新
     showMessage('🎉 怪物被击败! 掉落了能量碎片!', 0x44ff88);
     spawnFragmentDrop(m.position.clone());
+    // 小怪立即刷新（极短时间）
+    m.userData.respawnTimer = 0.5;
+    m.userData.deathTime = clock.elapsedTime;
   }
   updateHUD();
 
@@ -208,12 +292,7 @@ function onMonsterDefeated(m) {
     if (m.position.y > 8) {
       clearInterval(escapeInterval);
       scene.remove(m);
-
-      if (!isBoss) {
-        // 小怪一分钟后重新刷新；Boss不复活
-        m.userData.respawnTimer = 60;
-        m.userData.deathTime = clock.elapsedTime;
-      }
+      // 刷新计时已在上面设置，这里不再重复设置
     }
   }, 50);
 }

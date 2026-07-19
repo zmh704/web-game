@@ -301,6 +301,29 @@ function createPlayer() {
     rightBowShoe.position.set(0.16, -0.18, 0.02); g.add(rightBowShoe);
   }
 
+  // 创建木棍（默认隐藏，选中木棍时显示）
+  var stickMat = new THREE.MeshStandardMaterial({ color: 0x9a6b3f, roughness: 0.8 });
+  var stickBody = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 0.8, 6), stickMat);
+  stickBody.position.set(0.6, 0.7, 0.1);
+  stickBody.rotation.z = -0.6;
+  stickBody.rotation.x = 0.2;
+  g.add(stickBody);
+  var stickKnot = new THREE.Mesh(new THREE.SphereGeometry(0.065, 6, 6), new THREE.MeshStandardMaterial({ color: 0x7a5230, roughness: 0.9 }));
+  stickKnot.position.set(0.6, 1.05, 0.1);
+  g.add(stickKnot);
+  // 木棍发光光晕
+  var stickGlow = new THREE.Mesh(
+    new THREE.SphereGeometry(0.12, 8, 8),
+    new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.15, side: THREE.DoubleSide })
+  );
+  stickGlow.position.set(0.6, 0.85, 0.1);
+  g.add(stickGlow);
+  var stick = { body: stickBody, knot: stickKnot, glow: stickGlow };
+  g.userData.stick = stick;
+  stickBody.visible = false;
+  stickKnot.visible = false;
+  stickGlow.visible = false;
+
   g.position.set(0, groundY, -6);
   g.userData = { radius: 0.4, isGrounded: true };
   g.scale.set(1.1, 1.1, 1.1);

@@ -4,22 +4,7 @@
 function update(delta) {
   if (!GS.running || GS.gameOver) return;
 
-  // === 开局5秒倒计时 ===
-  if (GS.countdown > 0) {
-    GS.countdown -= delta;
-    var countdownEl = document.getElementById('countdown-number');
-    var overlayEl = document.getElementById('countdown-overlay');
-    var number = Math.ceil(GS.countdown);
-    if (countdownEl) countdownEl.textContent = number;
-    if (overlayEl) overlayEl.classList.remove('hidden');
-    if (GS.countdown <= 0) {
-      GS.countdown = 0;
-      if (overlayEl) overlayEl.classList.add('hidden');
-      showMessage('⚔️ 战斗开始!', 0xffd700);
-    }
-    // 倒计时期间跳过所有其他更新逻辑
-    return;
-  }
+  // （已移除中央房间额外刷怪：全场只保持1只Boss+1只小怪）
 
   if (attackCooldown > 0) attackCooldown -= delta;
   if (hitFlash > 0) hitFlash -= delta;
@@ -75,9 +60,18 @@ function update(delta) {
   updateMonster(delta);
   updateItems(delta);
 
+  // 更新手电筒
+  updateFlashlight(delta);
+
+  // 更新怪物血条（实时显示）
+  updateMonsterHPBar();
+
   if (energyOrb && energyOrb.userData.active) {
-    energyOrb.position.y = 1.2 + Math.sin(clock.elapsedTime * 2 + energyOrb.userData.floatPhase) * 0.15;
-    energyOrb.rotation.y += delta * 0.8;
+    // 金色宝箱：轻微浮动 + 光晕脉动
+    energyOrb.position.y = groundY + Math.sin(clock.elapsedTime * 2 + energyOrb.userData.floatPhase) * 0.06;
+    if (energyOrb.userData.glow) {
+      energyOrb.userData.glow.material.opacity = 0.08 + Math.sin(clock.elapsedTime * 3) * 0.05;
+    }
     if (energyOrb.userData.cooldown > 0) {
       energyOrb.userData.cooldown -= delta;
     } else if (player.position.distanceTo(energyOrb.position) < 2) {
@@ -91,13 +85,18 @@ function update(delta) {
       ship.userData.ring.material.color.setHex(shipFull ? 0x66ffcc : 0x44ff88);
       ship.userData.ring.material.opacity = shipFull ? 0.5 + Math.sin(clock.elapsedTime * 6) * 0.25 : 0.3;
     }
-    // 能量集满后，玩家主动走到飞船旁触发逃离
     if ((GS.energy || 0) >= (GS.energyMax || 5) && !GS.escaping && player.position.distanceTo(ship.position) < 3) {
       startEscape();
     }
   }
 
   updateFragments(delta);
+
+  // 性能优化：硬限制 projectiles 数量上限
+  if (projectiles.length > 500) {
+    var excess = projectiles.splice(0, projectiles.length - 300);
+    excess.forEach(function (p) { try { scene.remove(p); } catch (e) { } });
+  }
 
   for (var i = projectiles.length - 1; i >= 0; i--) {
     var p = projectiles[i];
@@ -122,7 +121,8 @@ function update(delta) {
         p.rotation.z += delta * 6;
       }
 
-      if (Math.random() < 0.4) {
+      // 性能优化：大幅降低拖尾粒子生成率
+      if (Math.random() < 0.04 && projectiles.length < 200) {
         var trail = new THREE.Mesh(
           new THREE.SphereGeometry(0.05, 4, 4),
           new THREE.MeshBasicMaterial({ color: w.color, transparent: true, opacity: 0.7 })
@@ -151,7 +151,6 @@ function update(delta) {
     }
 
     if (p.userData.playerDamage) {
-      // 火球尾迹效果
       if (Math.random() < 0.5) {
         var ftrail = new THREE.Mesh(
           new THREE.SphereGeometry(0.07, 4, 4),
@@ -162,25 +161,20 @@ function update(delta) {
         scene.add(ftrail);
         projectiles.push(ftrail);
       }
-      // 改进火球碰撞检测：使用更大的检测半径 + 水平/垂直分离检测，防止高速火球穿透
       var pdx = p.position.x - player.position.x;
       var pdz = p.position.z - player.position.z;
       var pdy = p.position.y - player.position.y;
       var horizDist = Math.sqrt(pdx * pdx + pdz * pdz);
       var vertDist = Math.abs(pdy);
-      // 水平距离 < 2.0 且 垂直距离 < 1.5 即判定为命中（相比之前仅用1.5球体半径，大幅提升捕获率）
       if (horizDist < 2.0 && vertDist < 1.5) {
+        // playerDamage 已按"击杀所需次数"计算（防御已计入），此处不再重复减防
         var pdmg = p.userData.playerDamage;
-        // 防御宝石+等级减少受到的伤害（动态上限）
-        var _defCap = getDynamicCaps().defCap;
-        var _totalDef = Math.min((GS.defBonus || 0) + (GS.levelDefBonus || 0), _defCap);
-        pdmg = Math.max(1, pdmg - _totalDef);
         if (GS._shielded) { pdmg = Math.ceil(pdmg * 0.1); showMessage('🛡️ 护盾格挡!', 0x9944ff); }
         GS.hp -= pdmg;
         hitFlash = 0.3;
         AudioMgr.playHurt();
         updateHUD();
-        showMessage('💥 被火球击中! -' + pdmg + '❤️', 0xff4444);
+        showMessage('💥 被击中! -' + pdmg + '❤️', 0xff4444);
         scene.remove(p);
         projectiles.splice(i, 1);
         if (GS.hp <= 0) { GS.hp = 0; GS.gameOver = true; GS.running = false; showGameOver(); }
@@ -188,7 +182,6 @@ function update(delta) {
       }
     }
     if (p.userData.damage) {
-      // 合并小怪和Boss作为潜在受击目标列表
       var targetMonsters = monsters.concat(bosses);
       var hitRegistered = false;
 
@@ -200,12 +193,15 @@ function update(delta) {
         var hitScale = (tm.userData.type && tm.userData.type.scale) || 1;
 
         if (dist < 1.8 * hitScale) {
-          tm.userData.hp -= p.userData.damage;
+          // 命中伤害限制：Boss至少25发、小怪至少15发子弹才能击杀（根据伤害随机浮动）
+          var minHits = tm.userData.isBoss ? 25 : 15;
+          var perHitCap = Math.ceil((tm.userData.type.hp || 100) / (minHits + Math.random() * 4));
+          var dealt = Math.max(1, Math.min(p.userData.damage, perHitCap));
+          tm.userData.hp -= dealt;
           monsterHitFlash = 0.2;
           AudioMgr.playHit();
-          showMessage('💥 命中! -' + p.userData.damage, 0x44ff88);
+          showMessage('💥 命中! -' + dealt, 0x44ff88);
 
-          // 更新被击中怪物的被攻击时间（如果是Boss，还会有特殊的暴怒逻辑）
           tm.userData.lastAttackedTime = clock.elapsedTime;
 
           var hitColor = p.userData.weapon ? p.userData.weapon.color : 0xffd700;
@@ -291,10 +287,10 @@ function update(delta) {
             onMonsterDefeated(tm);
           }
           hitRegistered = true;
-          break; // 跳出内层循环，每个子弹只能击中一只怪
+          break;
         }
       }
-      if (hitRegistered) continue; // 直接处理下一个子弹
+      if (hitRegistered) continue;
     }
 
     if (p.userData.life <= 0 || (p.material && p.material.opacity !== undefined && p.material.opacity <= 0)) {
@@ -303,22 +299,16 @@ function update(delta) {
     }
   }
 
-  // 检查怪物攻击玩家逻辑
+  // 检查怪物攻击玩家逻辑（怪物可出房间追击，近战范围内即可攻击）
   var activeMonsters = monsters.concat(bosses);
   for (var mIdx = 0; mIdx < activeMonsters.length; mIdx++) {
     var am = activeMonsters[mIdx];
     if (am.userData.active) {
-      // 非Boss怪物：只有玩家在怪物所在房间或怪物被激怒时才攻击
-      // Boss：始终可以攻击（包括火球）
-      if (!am.userData.isBoss) {
-        var playerRoom = roomIndexOf(player.position.x, player.position.z);
-        var monsterHomeRoom = roomIndexOf(am.userData.homeRoom.cx, am.userData.homeRoom.cz);
-        var isAggro = (am.userData.aggroTimer > 0);
-        if (playerRoom !== monsterHomeRoom && !isAggro) continue;
-      }
       var mDist = am.position.distanceTo(player.position);
-      if (mDist < 3.5 * ((am.userData.type && am.userData.type.scale) || 1)) {
-        monsterAttack(am); // 对每只能够攻击玩家的怪物触发攻击
+      // 远程小怪攻击距离更远；Boss与近战小怪只能近距离攻击
+      var attackRange = (!am.userData.isBoss && am.userData.type && am.userData.type.ranged) ? 8 : 3.5;
+      if (mDist < attackRange * ((am.userData.type && am.userData.type.scale) || 1)) {
+        monsterAttack(am);
       }
     }
   }
@@ -340,11 +330,9 @@ function updateMonster(delta) {
   for (var i = monsters.length - 1; i >= 0; i--) {
     var m = monsters[i];
     if (!m.userData.active) {
-      // 如果怪物不活跃（被打败），检查刷新倒计时
       if (m.userData.respawnTimer > 0) {
         m.userData.respawnTimer -= delta;
         if (m.userData.respawnTimer <= 0) {
-          // 一分钟后在初始房间重新刷新小怪物
           respawnMonster(m);
         }
       }
@@ -363,39 +351,37 @@ function updateMonster(delta) {
   }
 }
 
-// 刷新单个小怪
+// 刷新单个小怪（注：game-scene.js 中的同名函数会覆盖此实现）
 function respawnMonster(m) {
-  // 重生时应用时间增强（始终基于原始模板，避免多次重生复利叠加）
-  var baseT = m.userData.baseType || m.userData.type;
+  var baseT = (typeof pickMinionType === 'function') ? pickMinionType() : (m.userData.baseType || m.userData.type);
   var t = scaleMonsterType(baseT);
   var rm = m.userData.homeRoom;
-  
-  // 重新建立Mesh
+
   var g = buildMonsterMesh(t);
   if (t.scale && t.scale !== 1) g.scale.setScalar(t.scale);
-  
-  var x = rm.cx + (Math.random() - 0.5) * (roomSize - 6);
-  var z = rm.cz + (Math.random() - 0.5) * (roomSize - 6);
+
+  var x = rm.cx + (Math.random() - 0.5) * (roomSize - 12);
+  var z = rm.cz + (Math.random() - 0.5) * (roomSize - 12);
   g.position.set(x, groundY, z);
   scene.add(g);
 
-  // 复制/重置状态
   g.userData = {
     radius: 0.9 * (t.scale || 1),
     active: true,
     walkPhase: 0,
     type: t,
-    baseType: baseT, // 保留原始模板供下次重生计算增强
+    baseType: baseT,
     isBoss: false,
     speedMul: 1,
     homeRoom: rm,
     returnHomeTimer: 0,
+    rangedTimer: 2,
+    dashTimer: 10,
     lastAttackedTime: clock.elapsedTime,
     respawnTimer: 0
   };
   g.userData.hp = t.hp;
 
-  // 用新模型替换数组中的旧模型
   var idx = monsters.indexOf(m);
   if (idx !== -1) {
     monsters[idx] = g;
@@ -408,8 +394,17 @@ function respawnMonster(m) {
 // 单个怪物的运动和AI更新
 function updateSingleMonsterAI(m, delta) {
   var t = m.userData.type || {};
-  // 独立攻击冷却递减
   if (m.userData.attackCooldown > 0) m.userData.attackCooldown -= delta;
+
+  // 捆仙绳束缚：完全无法移动和攻击
+  if (m.userData.boundTimer > 0) {
+    m.userData.boundTimer -= delta;
+    if (m.userData.bindRings) {
+      m.userData.bindRings.rotation.y += delta * 3;
+    }
+    return;
+  }
+
   var dir = new THREE.Vector3().subVectors(player.position, m.position);
   var dist = dir.length();
   dir.y = 0;
@@ -417,88 +412,192 @@ function updateSingleMonsterAI(m, delta) {
   var home = m.userData.homeRoom;
   var distToHome = Math.sqrt(Math.pow(m.position.x - home.cx, 2) + Math.pow(m.position.z - home.cz, 2));
   
-  // 判断是否被玩家攻击（无论玩家在哪个房间）
   var timeSinceAttacked = clock.elapsedTime - (m.userData.lastAttackedTime || 0);
   var isAggro = (m.userData.aggroTimer > 0);
 
-  // 被攻击后进入暴怒追击状态（持续5秒），追击期间可跨越房间
   if (m.userData.aggroTimer > 0) {
     m.userData.aggroTimer -= delta;
   }
-  // 被击中后激怒
   if (timeSinceAttacked < 0.5) {
     m.userData.aggroTimer = 5.0;
   }
 
-  // 怪物是否离开自己房间
   var isOutOfRoom = (distToHome > halfRoom - 1.0);
 
-  // 自动回家和回血逻辑：
-  // 如果怪物未被攻击超过8秒，且离开房间较远或距离玩家太远，则自动回家并回血
-  var shouldReturnHome = false;
-  if (timeSinceAttacked > 8.0 && !isAggro && dist > 12) {
-    shouldReturnHome = true;
-  }
-  // 如果离开房间太远（超出房间边界2个房间），强制回家
-  if (distToHome > halfRoom * 2) {
-    shouldReturnHome = true;
-  }
+  // 追击距离上限：超过就放弃追击
+  var CHASE_LIMIT = m.userData.isBoss ? 25 : 20;
 
-  if (shouldReturnHome) {
-    // 自动回自己的房间（无视边界）
-    var homeDir = new THREE.Vector3(home.cx - m.position.x, 0, home.cz - m.position.z);
-    var homeDist = homeDir.length();
-    if (homeDist > 1.0) {
-      var speed = (t.speed || 2) * 2.0;
-      var move = homeDir.clone().normalize().multiplyScalar(speed * delta);
+  if (m.userData.isBoss) {
+    // ===== Boss：睡眠系统 + 守卫出生房间 =====
+    if (m.userData.sleeping === undefined) {
+      m.userData.sleeping = false;
+      m.userData.nonCombatTimer = 0;
+    }
+
+    // 被攻击立即惊醒（子弹/木棍命中都会刷新lastAttackedTime）
+    if (m.userData.sleeping && timeSinceAttacked < 0.5) {
+      wakeBoss(m, '💢 Boss被攻击惊醒了!');
+    }
+
+    if (m.userData.sleeping) {
+      // --- 睡眠中：不移动不攻击，倒计时苏醒 ---
+      m.userData.sleepTimer -= delta;
+
+      // 睡眠回血（每秒约5%最大生命）
+      if (m.userData.hp < t.hp) {
+        m.userData.hp = Math.min(m.userData.hp + delta * t.hp * 0.05, t.hp);
+      }
+
+      // 💤 气泡粒子
+      m.userData.zzTimer = (m.userData.zzTimer || 0) - delta;
+      if (m.userData.zzTimer <= 0) {
+        m.userData.zzTimer = 1.2;
+        var zz = new THREE.Mesh(
+          new THREE.TorusGeometry(0.12, 0.04, 6, 10),
+          new THREE.MeshBasicMaterial({ color: 0xaaddff, transparent: true, opacity: 0.8 })
+        );
+        zz.position.copy(m.position);
+        zz.position.y += 2.0 * (t.scale || 1);
+        zz.position.x += (Math.random() - 0.5) * 0.5;
+        zz.userData = { vel: new THREE.Vector3(0.2, 0.8, 0), life: 1.5, fade: true };
+        scene.add(zz);
+        projectiles.push(zz);
+      }
+
+      // 睡眠呼吸起伏
+      m.position.y = groundY + Math.sin(clock.elapsedTime * 1.5) * 0.03;
+
+      if (m.userData.sleepTimer <= 0) {
+        wakeBoss(m, '👁️ Boss苏醒了! 小心!');
+      }
+      return; // 睡眠状态跳过所有移动/攻击逻辑
+    }
+
+    // --- 苏醒状态 ---
+    var CHASE_LIMIT_BOSS = 25;
+    // 战斗判定：见到角色（追击范围内）/ 被激怒 / 最近被攻击
+    var inCombat = isAggro || dist < CHASE_LIMIT_BOSS || timeSinceAttacked < 5;
+    if (inCombat) {
+      m.userData.nonCombatTimer = 0;
+    } else {
+      // 非战斗状态持续5秒 → 进入睡眠（随机10-20秒后苏醒一次）
+      m.userData.nonCombatTimer += delta;
+      if (m.userData.nonCombatTimer >= 5) {
+        m.userData.sleeping = true;
+        m.userData.sleepTimer = 10 + Math.random() * 10;
+        m.userData.nonCombatTimer = 0;
+        m.userData.zzTimer = 0;
+        return;
+      }
+    }
+
+    var shouldReturnHome = false;
+    if (dist > CHASE_LIMIT_BOSS) {
+      shouldReturnHome = true;
+    }
+    if (timeSinceAttacked > 8.0 && !isAggro && dist > 12) {
+      shouldReturnHome = true;
+    }
+
+    if (shouldReturnHome) {
+      var homeDir = new THREE.Vector3(home.cx - m.position.x, 0, home.cz - m.position.z);
+      var homeDist = homeDir.length();
+      if (homeDist > 1.0) {
+        var speed = (t.speed || 2) * 2.0;
+        var move = homeDir.clone().normalize().multiplyScalar(speed * delta);
+        m.position.add(move);
+        m.rotation.y = Math.atan2(move.x, move.z);
+        m.userData.walkPhase += delta * speed * 3;
+      } else {
+        m.userData.aggroTimer = 0;
+      }
+      // 脱战状态回血（每秒约5%最大生命）
+      if (m.userData.hp < t.hp) {
+        m.userData.hp = Math.min(m.userData.hp + delta * t.hp * 0.05, t.hp);
+      }
+    } else if (dist > 2.5 && dist < CHASE_LIMIT_BOSS) {
+      // 苏醒状态见到角色：主动追击攻击
+      var speed = (t.speed || 2) * (m.userData.speedMul || 1) * (isAggro ? 1.4 : 1.0);
+      var move = dir.clone().normalize().multiplyScalar(speed * delta);
       m.position.add(move);
       m.rotation.y = Math.atan2(move.x, move.z);
       m.userData.walkPhase += delta * speed * 3;
-    } else {
-      // 回到家里，重置aggro，开始回血
-      m.userData.aggroTimer = 0;
-      if (m.userData.hp < t.hp) {
-        m.userData.hp = Math.min(m.userData.hp + delta * 10, t.hp);
-      }
     }
-  } else if (dist > 2.5 && dist < 25 && (isAggro || roomIndexOf(player.position.x, player.position.z) === roomIndexOf(home.cx, home.cz))) {
-    // 追击角色：被激怒时无视房间边界；否则只在同一房间内追击
-    var speed = (t.speed || 2) * (m.userData.speedMul || 1) * (isAggro ? 1.4 : 1.0);
-    var move = dir.clone().normalize().multiplyScalar(speed * delta);
-    m.position.add(move);
-    m.rotation.y = Math.atan2(move.x, move.z);
-    m.userData.walkPhase += delta * speed * 3;
+  } else {
+    // ===== 小怪：全图巡逻，遇到角色就追击攻击 =====
+    if (dist < CHASE_LIMIT && dist > 2.5) {
+      // 遇到角色：发起追击
+      var speed = (t.speed || 2) * (m.userData.speedMul || 1) * (isAggro ? 1.4 : 1.0);
+      if (t.charge && isAggro) {
+        speed *= 2.5;
+      }
+      var move = dir.clone().normalize().multiplyScalar(speed * delta);
+      m.position.add(move);
+      m.rotation.y = Math.atan2(move.x, move.z);
+      m.userData.walkPhase += delta * speed * 3;
+      // 追击中重置房间停留计时
+      m.userData.roomStayTimer = 0;
+      m.userData.travelWaypoints = null;
+    } else if (dist >= CHASE_LIMIT) {
+      // 未遇到角色：房间内游荡，停留超10秒换房间
+      updateMinionWander(m, t, delta);
+    }
   }
 
-  // 漂浮或行走动效
+  // 近战小怪：每10秒一次急速冲刺攻击
+  if (!m.userData.isBoss && !t.ranged) {
+    if (m.userData.dashTimer === undefined) m.userData.dashTimer = 10;
+    if (m.userData.dashing > 0) {
+      m.userData.dashing -= delta;
+      if (dist > 1.5) {
+        var dashMove = dir.clone().normalize().multiplyScalar((t.speed || 2) * 5 * delta);
+        m.position.add(dashMove);
+        m.rotation.y = Math.atan2(dashMove.x, dashMove.z);
+        m.userData.walkPhase += delta * 20;
+      }
+      if (dist < 3.5 * (t.scale || 1)) {
+        m.userData.dashing = 0;
+        monsterAttack(m);
+      }
+    } else {
+      m.userData.dashTimer -= delta;
+      if (m.userData.dashTimer <= 0 && dist > 3 && dist < CHASE_LIMIT) {
+        m.userData.dashTimer = 10;
+        m.userData.dashing = 1.0;
+        showMessage('⚡ 小怪发起急速冲刺!', 0xff8844);
+      }
+    }
+  }
+
   if (t.fly) {
     m.position.y = groundY + 0.6 + Math.sin(clock.elapsedTime * 3) * 0.25;
   } else {
     m.position.y = groundY + Math.abs(Math.sin(m.userData.walkPhase)) * 0.08;
   }
 
-  // Boss远程火球逻辑
-  if (m.userData.isBoss) {
+  // 远程攻击怪物发射弹丸
+  if (t.ranged && !m.userData.isBoss) {
     m.userData.rangedTimer -= delta;
-    if (m.userData.rangedTimer <= 0 && dist > 3 && dist < 20) {
-      m.userData.rangedTimer = m.userData.bossPhase <= 1 ? 1.6 : 2.5;
+    if (m.userData.rangedTimer <= 0 && dist > 3 && dist < 15) {
+      m.userData.rangedTimer = t.rangedCooldown || 2.5;
       var fb = new THREE.Mesh(
-        new THREE.SphereGeometry(0.22, 8, 8),
-        new THREE.MeshStandardMaterial({ color: 0xff4422, emissive: 0xff2200, emissiveIntensity: 0.8 })
+        new THREE.SphereGeometry(0.15, 8, 8),
+        new THREE.MeshStandardMaterial({ color: t.emissive || 0xff4422, emissive: t.emissive || 0xff2200, emissiveIntensity: 0.8 })
       );
       fb.position.copy(m.position);
-      fb.position.y += 1.2 * (t.scale || 1);
-      // 瞄准玩家身体中心，确保火球能命中
+      fb.position.y += 1.0 * (t.scale || 1);
       var aimPoint = player.position.clone();
       aimPoint.y += 0.8;
       var fdir = new THREE.Vector3().subVectors(aimPoint, fb.position).normalize();
-      fb.userData = { vel: fdir.multiplyScalar(6.5), life: 4, playerDamage: Math.ceil((t.dmg || 15) * 0.7) };
+      fb.userData = { vel: fdir.multiplyScalar(5), life: 4, playerDamage: monsterHitDamage(m) };
       scene.add(fb);
       projectiles.push(fb);
       AudioMgr.playAttack();
-      showMessage('☄️ Boss 发射火球!', 0xff6600);
+      showMessage('💀 远程怪发射弹丸!', 0xff6600);
     }
   }
+
+  // Boss只能近战攻击（狂暴阶段仅提升移速），不再远程发射火球
 
   // 发光动画与受击闪烁
   m.children.forEach(function (child, idx) {
@@ -527,6 +626,127 @@ function updateSingleMonsterAI(m, delta) {
         child.material.emissiveIntensity = 0.15;
       }
     }
+  }
+}
+
+// ============================================================
+// Boss睡眠/苏醒
+// ============================================================
+function wakeBoss(m, msg) {
+  if (!m.userData.sleeping) return;
+  m.userData.sleeping = false;
+  m.userData.sleepTimer = 0;
+  m.userData.nonCombatTimer = 0;
+  if (msg) showMessage(msg, 0xff4444);
+  // 惊醒特效：红色冲击环
+  var ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.3, 0.45, 20),
+    new THREE.MeshBasicMaterial({ color: 0xff3322, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
+  );
+  ring.position.copy(m.position);
+  ring.position.y += 1.5 * ((m.userData.type && m.userData.type.scale) || 1);
+  ring.rotation.x = -Math.PI / 2;
+  ring.userData = { expandSpeed: 8, life: 0.5, fade: true };
+  scene.add(ring);
+  projectiles.push(ring);
+  AudioMgr.playHurt();
+}
+
+// 解锁宝箱时惊醒所有睡眠中的Boss（在答题正确时调用）
+function wakeAllBosses() {
+  bosses.forEach(function (b) {
+    if (b.userData.active && b.userData.sleeping) {
+      wakeBoss(b, '💢 Boss被宝箱惊醒了! 快跑!');
+      b.userData.aggroTimer = 8.0; // 惊醒后主动攻击
+    }
+  });
+}
+
+// ============================================================
+// 小怪巡逻：房间内游荡，停留超过10秒随机去下一个房间
+// （地图为十字布局，跨房间移动经过中央房间的门）
+// ============================================================
+function updateMinionWander(m, t, delta) {
+  var speed = (t.speed || 2) * 0.8; // 巡逻速度略慢
+
+  // 脱战巡逻时回血（每秒约5%最大生命）
+  if (m.userData.hp < t.hp) {
+    m.userData.hp = Math.min(m.userData.hp + delta * t.hp * 0.05, t.hp);
+  }
+
+  // 正在跨房间移动：沿路径点前进
+  if (m.userData.travelWaypoints && m.userData.travelWaypoints.length > 0) {
+    var wp = m.userData.travelWaypoints[0];
+    var wpDir = new THREE.Vector3(wp.x - m.position.x, 0, wp.z - m.position.z);
+    var wpDist = wpDir.length();
+    if (wpDist < 1.5) {
+      m.userData.travelWaypoints.shift();
+      if (m.userData.travelWaypoints.length === 0) {
+        // 抵达新房间
+        m.userData.homeRoom = m.userData.travelTargetRoom || m.userData.homeRoom;
+        m.userData.roomStayTimer = 0;
+        m.userData.wanderTarget = null;
+      }
+    } else {
+      var mv = wpDir.normalize().multiplyScalar(speed * 1.5 * delta); // 赶路稍快
+      m.position.add(mv);
+      m.rotation.y = Math.atan2(mv.x, mv.z);
+      m.userData.walkPhase += delta * speed * 4;
+    }
+    return;
+  }
+
+  // 房间停留计时
+  m.userData.roomStayTimer = (m.userData.roomStayTimer || 0) + delta;
+
+  if (m.userData.roomStayTimer > 10) {
+    // 超过10秒：随机选下一个房间，规划路径
+    var curRoom = ROOMS[roomIndexOf(m.position.x, m.position.z)];
+    var candidates = ROOMS.filter(function (r) { return r !== curRoom; });
+    var nextRoom = candidates[Math.floor(Math.random() * candidates.length)];
+
+    var waypoints = [];
+    var isCurCenter = (curRoom.cx === 0 && curRoom.cz === 0);
+    var isNextCenter = (nextRoom.cx === 0 && nextRoom.cz === 0);
+    // 十字地图：外围房间之间必须经过中央房间
+    if (!isCurCenter) {
+      // 当前房间通向中央的门（门位于两房间中点方向）
+      waypoints.push({ x: curRoom.cx / 2, z: curRoom.cz / 2 });
+    }
+    if (!isCurCenter && !isNextCenter) {
+      waypoints.push({ x: 0, z: 0 }); // 中央房间中心
+    }
+    if (!isNextCenter) {
+      waypoints.push({ x: nextRoom.cx / 2, z: nextRoom.cz / 2 }); // 通向目标房间的门
+    }
+    // 目标房间内随机落点
+    waypoints.push({
+      x: nextRoom.cx + (Math.random() - 0.5) * (roomSize - 14),
+      z: nextRoom.cz + (Math.random() - 0.5) * (roomSize - 14)
+    });
+
+    m.userData.travelWaypoints = waypoints;
+    m.userData.travelTargetRoom = nextRoom;
+    m.userData.roomStayTimer = 0;
+    return;
+  }
+
+  // 房间内随机游荡
+  if (!m.userData.wanderTarget ||
+      Math.abs(m.position.x - m.userData.wanderTarget.x) + Math.abs(m.position.z - m.userData.wanderTarget.z) < 1.5) {
+    var rm = ROOMS[roomIndexOf(m.position.x, m.position.z)];
+    m.userData.wanderTarget = {
+      x: rm.cx + (Math.random() - 0.5) * (roomSize - 14),
+      z: rm.cz + (Math.random() - 0.5) * (roomSize - 14)
+    };
+  }
+  var wt = m.userData.wanderTarget;
+  var wDir = new THREE.Vector3(wt.x - m.position.x, 0, wt.z - m.position.z);
+  if (wDir.length() > 0.5) {
+    var wMv = wDir.normalize().multiplyScalar(speed * delta);
+    m.position.add(wMv);
+    m.rotation.y = Math.atan2(wMv.x, wMv.z);
+    m.userData.walkPhase += delta * speed * 3;
   }
 }
 
@@ -570,32 +790,57 @@ function updateMinimap() {
   if (ship) {
     var sx = ox + ship.position.x * scale, sz = oz + ship.position.z * scale;
     var shipReady = GS.energy >= (GS.energyMax || 5);
-    ctx.fillStyle = shipReady ? '#66ffcc' : '#99aabb';
+    var sc = shipReady ? '#66ffcc' : '#99aabb';
+    // 火箭形状：机身 + 尖头 + 两侧尾翼 + 尾焰
+    ctx.save();
+    ctx.translate(sx, sz);
+    ctx.fillStyle = sc;
+    // 机身
     ctx.beginPath();
-    ctx.moveTo(sx - 8, sz + 6); ctx.lineTo(sx - 5, sz - 6); ctx.lineTo(sx + 5, sz - 6); ctx.lineTo(sx + 8, sz + 6);
+    ctx.moveTo(0, -9);          // 尖头
+    ctx.quadraticCurveTo(4.5, -3, 3.5, 4);
+    ctx.lineTo(-3.5, 4);
+    ctx.quadraticCurveTo(-4.5, -3, 0, -9);
     ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = shipReady ? '#66ffcc' : '#99aabb';
-    ctx.lineWidth = 1; ctx.stroke();
+    // 尾翼
+    ctx.beginPath();
+    ctx.moveTo(3.5, 0); ctx.lineTo(7, 6); ctx.lineTo(3.5, 5); ctx.closePath(); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-3.5, 0); ctx.lineTo(-7, 6); ctx.lineTo(-3.5, 5); ctx.closePath(); ctx.fill();
+    // 舷窗
+    ctx.fillStyle = 'rgba(20,40,60,0.9)';
+    ctx.beginPath(); ctx.arc(0, -2, 1.8, 0, Math.PI * 2); ctx.fill();
+    // 尾焰（能量集满时闪烁）
+    if (shipReady) {
+      ctx.fillStyle = 'rgba(255,170,60,0.9)';
+      ctx.beginPath();
+      ctx.moveTo(-2, 5); ctx.lineTo(0, 9 + Math.sin(clock.elapsedTime * 8) * 1.5); ctx.lineTo(2, 5);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
   }
 
   if (energyOrb && energyOrb.parent) {
     var ex = ox + energyOrb.position.x * scale, ez = oz + energyOrb.position.z * scale;
+    // 金色宝箱：大号闪烁金色标记
+    var pulseSize = 4 + Math.sin(clock.elapsedTime * 4) * 1.5;
     ctx.fillStyle = '#ffd700';
-    ctx.beginPath(); ctx.arc(ex, ez, 4, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = 'rgba(255,215,0,0.4)';
-    ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(ex, ez, 6, 0, Math.PI * 2); ctx.stroke();
+    ctx.shadowColor = '#ffd700';
+    ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.arc(ex, ez, pulseSize, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(255,215,0,0.6)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(ex, ez, 7, 0, Math.PI * 2); ctx.stroke();
+    // 宝箱图标：小十字 + 圆点
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 7px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🎁', ex, ez);
   }
 
-  var activeMonsters = monsters.concat(bosses);
-  activeMonsters.forEach(function(m) {
-    if (m.userData.active) {
-      var mx = ox + m.position.x * scale, mz = oz + m.position.z * scale;
-      ctx.fillStyle = m.userData.isBoss ? '#ffd700' : '#ff2244'; // Boss和小怪用不同颜色标识
-      ctx.beginPath(); ctx.arc(mx, mz, 4, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = m.userData.isBoss ? 'rgba(255,215,0,0.3)' : 'rgba(255,34,68,0.3)';
-      ctx.beginPath(); ctx.arc(mx, mz, 7, 0, Math.PI * 2); ctx.fill();
-    }
-  });
+  // 小地图不显示怪物位置
 
   var cx = ox + player.position.x * scale, cz = oz + player.position.z * scale;
   ctx.fillStyle = '#44ff88';

@@ -1,5 +1,6 @@
-  "name": "奇迹森林大冒险",
-  "short_name": "奇迹森林",
+{
+  "name": "奇妙冒险记",
+  "short_name": "奇妙冒险记",
   "description": "儿童教育闯关游戏 - 答题探险、打败怪物、收集星星",
   "start_url": "https://qmgame.loca.lt/game.html",
   "display": "fullscreen",
