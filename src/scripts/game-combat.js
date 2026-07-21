@@ -15,6 +15,8 @@ function useSkill() {
   GS.skillEnergy = 0;
   // 先更新UI，确保用户看到反馈
   showMessage('✨ 技能释放!', 0xcc88ff);
+  AudioMgr.playCharacterVoice('skill');
+  playSkillAnimation();
   GS.skillCooldown = GS.skillCooldownTime; // 20秒冷却
   GS.skillActive = GS.skillDuration; // 3秒持续
 
@@ -84,10 +86,14 @@ function useSkill() {
     // 确保移动速度立即生效
     moveSpeed = 12;
 
+    // 创建技能光环
+    createPlayerAura(0xff8800, 0.5);
+
   } else {
     showMessage('🛡️ 能量护盾! (持续3秒)', 0x9944ff);
     GS._shielded = true;
     AudioMgr.playSkill();
+    playSkillAnimation();
 
     // 移除旧护盾（防止重复）
     if (GS._shieldMesh) {
@@ -251,6 +257,12 @@ function updateSkillTimers(delta) {
 // 攻击系统
 // ============================================================
 function attack() {
+  // 如果被抓住，攻击按钮变为挣脱（需等待game-scene.js加载）
+  if (typeof captureState !== 'undefined' && captureState && captureState.captured) {
+    onCaptureTap();
+    return;
+  }
+
   if (attackCooldown > 0 || !GS.curWeapon || !GS.weapons[GS.curWeapon] || GS.gameOver || !GS.running) return;
   var w = GS.weapons[GS.curWeapon];
 
@@ -295,6 +307,7 @@ function attack() {
   var _caps = getDynamicCaps();
   attackCooldown = Math.max(0.15, 0.5 - Math.min((GS.atkSpeedBonus || 0), _caps.atkSpeedCap));
   AudioMgr.playAttack();
+  playAttackAnimation();
   var w = GS.weapons[GS.curWeapon];
   var dmg = w.dmg + Math.min((GS.atkBonus || 0) + (GS.levelAtkBonus || 0), _caps.atkCap);  // 攻击宝石+等级增加攻击力（动态上限）
 
@@ -573,6 +586,7 @@ function stickMeleeAttack(w) {
 
   if (!target) {
     showMessage('🪵 挥棒落空!', 0x9a6b3f);
+    playAttackAnimation();
     return;
   }
 
@@ -661,6 +675,7 @@ function monsterAttack(m) {
     hitFlash = 0.3;
     showMessage('💥 被击中! -' + dmg + '❤️', 0xff4444);
     AudioMgr.playHurt();
+    playHurtAnimation();
 
     // === 攻击特效 ===
     createMonsterAttackEffect(m);
@@ -739,6 +754,7 @@ function showGameOver() {
   document.getElementById('result-title').textContent = failed ? '💔 闯关失败...' : '🎉 通关成功!';
   document.getElementById('final-answers').textContent = '✅ 答对题目: ' + GS.correct + '/' + GS.total;
   document.getElementById('final-weapons').textContent = '⚔️ 获得武器: ' + GS.weaponCount + '/3';
+  if (failed) AudioMgr.playCharacterVoice('defeat');
   // 失败时不显示"下一章节"按钮（只有通关后由gameWin控制显示）
   var nextBtn = document.getElementById('next-chapter-btn');
   if (nextBtn) nextBtn.style.display = 'none';
@@ -764,6 +780,7 @@ function gameWin() {
   document.getElementById('result-title').textContent = '🎉 章节 ' + GS.chapter + ' 通关!';
   document.getElementById('final-answers').textContent = '✅ 答对题目: ' + GS.correct + '/' + GS.total;
   document.getElementById('final-weapons').textContent = '⚔️ 获得武器: ' + GS.weaponCount + '/3';
+  AudioMgr.playCharacterVoice('victory');
 
   var nextBtn = document.getElementById('next-chapter-btn');
   if (hasNext) {

@@ -331,3 +331,219 @@ function createPlayer() {
   scene.add(g);
   player = g;
 }
+
+// ============================================================
+// 角色动画系统
+// ============================================================
+var playerAnimState = {
+  idle: true,
+  moving: false,
+  attacking: false,
+  hurt: false,
+  skill: false,
+  hurtFlash: 0,
+  attackTimer: 0,
+  baseY: 0,
+  breathPhase: 0,
+  blinkTimer: 0,
+  isBlinking: false
+};
+
+// 初始化动画状态
+function initPlayerAnimation() {
+  if (!player) return;
+  playerAnimState.baseY = player.position.y;
+}
+
+// 更新角色动画（在每帧调用）
+function updatePlayerAnimation(delta, time) {
+  if (!player) return;
+
+  // 跳跃时不应用呼吸/移动动画，避免与跳跃系统冲突
+  if (GS.isJumping) return;
+
+  // 呼吸动画（待机时）
+  if (playerAnimState.idle && !playerAnimState.moving) {
+    playerAnimState.breathPhase += delta * 2;
+    var breathOffset = Math.sin(playerAnimState.breathPhase) * 0.03;
+    player.position.y = playerAnimState.baseY + breathOffset;
+
+    // 轻微的身体摇摆
+    player.rotation.z = Math.sin(playerAnimState.breathPhase * 0.5) * 0.02;
+  }
+
+  // 移动动画
+  if (playerAnimState.moving) {
+    playerAnimState.breathPhase += delta * 4;
+    var walkBounce = Math.abs(Math.sin(playerAnimState.breathPhase)) * 0.08;
+    player.position.y = playerAnimState.baseY + walkBounce;
+
+    // 身体轻微左右摇摆
+    player.rotation.z = Math.sin(playerAnimState.breathPhase) * 0.05;
+  }
+
+  // 受击动画
+  if (playerAnimState.hurt) {
+    playerAnimState.hurtFlash -= delta;
+    if (playerAnimState.hurtFlash <= 0) {
+      playerAnimState.hurt = false;
+      player.children.forEach(function (child) {
+        if (child.isMesh && child.material && child.material.emissive) {
+          child.material.emissive.setHex(0x000000);
+        }
+      });
+    } else {
+      // 闪烁红色
+      var flashIntensity = Math.sin(playerAnimState.hurtFlash * 20) > 0 ? 1 : 0;
+      player.children.forEach(function (child) {
+        if (child.isMesh && child.material && child.material.emissive !== undefined) {
+          if (flashIntensity) {
+            child.material.emissive.setHex(0xff0000);
+            child.material.emissiveIntensity = 0.5;
+          } else {
+            child.material.emissive.setHex(0x000000);
+          }
+        }
+      });
+    }
+  }
+
+  // 攻击动画计时器
+  if (playerAnimState.attackTimer > 0) {
+    playerAnimState.attackTimer -= delta;
+  }
+
+  // 眨眼动画
+  playerAnimState.blinkTimer -= delta;
+  if (playerAnimState.blinkTimer <= 0 && !playerAnimState.isBlinking) {
+    playerAnimState.isBlinking = true;
+    setTimeout(function () {
+      playerAnimState.isBlinking = false;
+      playerAnimState.blinkTimer = 2 + Math.random() * 4;
+    }, 150);
+  }
+}
+
+// 播放受击动画
+function playHurtAnimation() {
+  if (!player) return;
+  playerAnimState.hurt = true;
+  playerAnimState.hurtFlash = 0.5;
+
+  // 击退效果
+  playerVelY = Math.max(playerVelY, 3);
+  player.position.y += 0.3;
+}
+
+// 播放攻击动画
+function playAttackAnimation() {
+  if (!player) return;
+  playerAnimState.attackTimer = 0.3;
+
+  // 攻击时身体前倾
+  var originalRotX = player.rotation.x;
+  player.rotation.x = -0.2;
+
+  setTimeout(function () {
+    if (player) {
+      player.rotation.x = originalRotX;
+    }
+  }, 200);
+}
+
+// 播放技能动画
+function playSkillAnimation() {
+  if (!player) return;
+  playerAnimState.skill = true;
+
+  // 技能时身体上浮
+  var skillFloat = setInterval(function () {
+    if (!player || !playerAnimState.skill) {
+      clearInterval(skillFloat);
+      return;
+    }
+    player.position.y = playerAnimState.baseY + Math.sin(Date.now() * 0.01) * 0.2;
+  }, 16);
+
+  setTimeout(function () {
+    playerAnimState.skill = false;
+    if (player) {
+      player.position.y = playerAnimState.baseY;
+    }
+    clearInterval(skillFloat);
+  }, 3000);
+}
+
+// 创建角色脚下的状态光环
+function createPlayerAura(color, opacity) {
+  // 移除旧光环
+  if (player.userData.aura) {
+    try { player.remove(player.userData.aura); } catch (e) { }
+  }
+
+  var auraGeo = new THREE.RingGeometry(0.5, 0.7, 32);
+  var auraMat = new THREE.MeshBasicMaterial({
+    color: color,
+    transparent: true,
+    opacity: opacity || 0.4,
+    side: THREE.DoubleSide
+  });
+  var aura = new THREE.Mesh(auraGeo, auraMat);
+  aura.rotation.x = -Math.PI / 2;
+  aura.position.y = 0.05;
+  player.add(aura);
+  player.userData.aura = aura;
+
+  return aura;
+}
+
+// 更新角色光环
+function updatePlayerAura(time) {
+  if (!player || !player.userData.aura) return;
+
+  var aura = player.userData.aura;
+  var pulse = 1 + Math.sin(time * 3) * 0.15;
+  aura.scale.set(pulse, pulse, pulse);
+  aura.material.opacity = 0.3 + Math.sin(time * 2) * 0.15;
+  aura.rotation.z += 0.02;
+}
+
+// 播放脚底光环特效（受击/治疗等）
+function playAuraEffect(color, duration) {
+  if (!player) return;
+
+  var particles = [];
+  for (var i = 0; i < 12; i++) {
+    var angle = (Math.PI * 2 / 12) * i;
+    var particle = new THREE.Mesh(
+      new THREE.SphereGeometry(0.05, 4, 4),
+      new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.8 })
+    );
+    particle.position.set(Math.cos(angle) * 0.6, 0.1, Math.sin(angle) * 0.6);
+    player.add(particle);
+    particles.push({ mesh: particle, angle: angle, radius: 0.6 });
+  }
+
+  var startTime = Date.now();
+  var animateParticles = setInterval(function () {
+    var elapsed = (Date.now() - startTime) / 1000;
+    if (elapsed > duration) {
+      particles.forEach(function (p) {
+        try { player.remove(p.mesh); } catch (e) { }
+      });
+      clearInterval(animateParticles);
+      return;
+    }
+
+    particles.forEach(function (p, idx) {
+      p.angle += 0.05;
+      var yOffset = Math.sin(elapsed * 3 + idx) * 0.2;
+      p.mesh.position.set(
+        Math.cos(p.angle) * p.radius,
+        0.1 + yOffset,
+        Math.sin(p.angle) * p.radius
+      );
+      p.mesh.material.opacity = 0.8 - (elapsed / duration) * 0.8;
+    });
+  }, 16);
+}

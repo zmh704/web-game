@@ -1,9 +1,11 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>奇妙冒险记</title>
+    <script>location.href = 'game.html';</script>
     <style>
         body {
             margin: 0;
@@ -12,6 +14,7 @@
             background-color: #000;
             touch-action: none;
         }
+
         #game-container {
             width: 100vw;
             height: 100vh;
@@ -19,6 +22,7 @@
             justify-content: center;
             align-items: center;
         }
+
         .loading {
             color: white;
             font-family: Arial, sans-serif;
@@ -26,6 +30,7 @@
         }
     </style>
 </head>
+
 <body>
     <div id="game-container">
         <div class="loading">加载中...</div>
@@ -116,4 +121,5 @@
         loadScenes();
     </script>
 </body>
+
 </html>

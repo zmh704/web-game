@@ -448,7 +448,9 @@ var MONSTER_TYPES = {
     '毒液喷射者': { color: 0x224400, emissive: 0x44aa00, eyes: 6, speed: 1.5, hp: 260, dmg: 7, scale: 0.8, ranged: true, rangedCooldown: 1.8, fangs: true },
     // 新增快速扑击怪物
     '影狼': { color: 0x111122, emissive: 0x4444aa, eyes: 4, speed: 4.5, hp: 260, dmg: 12, scale: 0.7, charge: true, fangs: true, spikes: true },
-    '突袭者': { color: 0x331111, emissive: 0xaa2222, eyes: 2, speed: 5.0, hp: 240, dmg: 15, scale: 0.6, charge: true, fangs: true }
+    '突袭者': { color: 0x331111, emissive: 0xaa2222, eyes: 2, speed: 5.0, hp: 240, dmg: 15, scale: 0.6, charge: true, fangs: true },
+    // 抓捕者（巡逻+快速抓捕+持续扣血）
+    '追捕者': { color: 0x111133, emissive: 0x4444ff, eyes: 6, speed: 3.0, hp: 500, dmg: 5, scale: 0.9, spikes: true, fangs: true, chaser: true, chaseSpeed: 7.0 }
 };
 
 var BOSSES = {

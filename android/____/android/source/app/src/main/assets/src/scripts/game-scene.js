@@ -14,10 +14,22 @@ var ROOMS = [
   { cx: 0, cz: -40, name: '北' },
   { cx: 40, cz: 0, name: '东' },
   { cx: 0, cz: 40, name: '南' },
-  { cx: -40, cz: 0, name: '西' }
+  { cx: -40, cz: 0, name: '西' },
+  { cx: 40, cz: -40, name: '东北' },
+  { cx: 40, cz: 40, name: '东南' },
+  { cx: -40, cz: -40, name: '西北' },
+  { cx: -40, cz: 40, name: '西南' }
 ];
 var DOOR_HALF = 3.6;
-var DOOR_POS = { 1: { x: 0, z: -20 }, 2: { x: 20, z: 0 }, 3: { x: 0, z: 20 }, 4: { x: -20, z: 0 } };
+  // 3x3网格中12扇门的位置
+var DOOR_POSITIONS = [
+  // 垂直墙（x=-20和x=20）上的门: [x, z]
+  [-20, -40], [-20, 0], [-20, 40],
+  [20, -40], [20, 0], [20, 40],
+  // 水平墙（z=-20和z=20）上的门
+  [-40, -20], [0, -20], [40, -20],
+  [-40, 20], [0, 20], [40, 20]
+];
 function roomIndexOf(x, z) {
   var best = 0, bd = 1e9;
   for (var i = 0; i < ROOMS.length; i++) {
@@ -51,6 +63,19 @@ var centerRoomMonstersSpawned = false;
 // 怪物刷新房间追踪（防止连续刷新在同一个房间）
 var lastMonsterSpawnRoom = null;
 var lastBossSpawnRoom = null;
+
+// 抓捕者系统
+var chaserMonster = null;
+var captureState = {
+  captured: false,
+  tapCount: 0,
+  maxTap: 10,
+  dmgTimer: 0,
+  grabCooldown: 0
+};
+var chaserLeaveTimer = 0;      // 抓捕者离开计时器
+var CHASER_LEAVE_DURATION = 60; // 60秒后自动离开
+var CHASER_RESPAWN_DELAY = 30;  // 离开后30秒重新生成
 
 // 初始化场景
 function initScene() {
@@ -93,12 +118,14 @@ function initScene() {
 
   buildRoom();
   createPlayer();
+  initPlayerAnimation();
   initMonsters();
   spawnEnergyOrb();
   spawnItems();
   buildWeaponBar();
 
   AudioMgr.init();
+  
 
   document.getElementById('char-name').textContent = GS.character === 'qike' ? '奇奇' : '妙妙';
 
@@ -111,6 +138,11 @@ function initScene() {
     keys[e.key.toLowerCase()] = true;
     if (e.key === ' ') { e.preventDefault(); tryJump(); }
     if (e.key === 'f' || e.key === 'F') { toggleFlashlight(); }
+    // 桌面端：被抓住时按空格挣脱
+    if (e.key === ' ' && captureState && captureState.captured) {
+      e.preventDefault();
+      onCaptureTap();
+    }
   });
   document.addEventListener('keyup', function (e) { keys[e.key.toLowerCase()] = false });
   document.addEventListener('mousemove', function (e) {
@@ -166,59 +198,110 @@ function buildRoom() {
     scene.add(wall); walls.push(wall);
   }
   var H = halfRoom, G = DOOR_HALF;
-  var segLen = H - G, segMid = (H + G) / 2;
-  [-H, H].forEach(function (p) {
-    wallSeg(-segMid, p, segLen, 0); wallSeg(segMid, p, segLen, 0);
-    wallSeg(p, -segMid, segLen, Math.PI / 2); wallSeg(p, segMid, segLen, Math.PI / 2);
-  });
-  wallSeg(0, -3 * H, roomSize, 0);
-  wallSeg(-H, -2 * H, roomSize, Math.PI / 2); wallSeg(H, -2 * H, roomSize, Math.PI / 2);
-  wallSeg(0, 3 * H, roomSize, 0);
-  wallSeg(-H, 2 * H, roomSize, Math.PI / 2); wallSeg(H, 2 * H, roomSize, Math.PI / 2);
-  wallSeg(3 * H, 0, roomSize, Math.PI / 2);
-  wallSeg(2 * H, -H, roomSize, 0); wallSeg(2 * H, H, roomSize, 0);
-  wallSeg(-3 * H, 0, roomSize, Math.PI / 2);
-  wallSeg(-2 * H, -H, roomSize, 0); wallSeg(-2 * H, H, roomSize, 0);
+  var S = H * 3; // 60, 半边长（3x3网格总边长的一半）
 
-  var frameMat = new THREE.MeshStandardMaterial({ color: 0x1a1014, roughness: 0.9 });
-  [[0, -H, 0], [0, H, 0], [-H, 0, 1], [H, 0, 1]].forEach(function (d) {
-    [-1, 1].forEach(function (s) {
-      var pillar = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.6, 0.3), frameMat);
-      if (d[2] === 0) pillar.position.set(d[0] + s * (G + 0.2), 1.8, d[1]);
-      else pillar.position.set(d[0], 1.8, d[1] + s * (G + 0.2));
-      scene.add(pillar);
+  // 辅助：在一条墙线上插入带门洞的墙段
+  // ry=0: 水平墙(沿x轴)，门位置沿x方向; ry=PI/2: 垂直墙(沿z轴)，门位置沿z方向
+  function addSegmentedWall(fixedCoord, ry, doorPositions) {
+    var halfLen = S;
+    var prev = -halfLen;
+    var sortedDoors = doorPositions.slice().sort(function(a,b){return a-b;});
+    sortedDoors.forEach(function(dp) {
+      var gapStart = dp - G;
+      var gapEnd = dp + G;
+      if (gapStart > prev + 0.01) {
+        var segCenter = (prev + gapStart) / 2;
+        var segLen = gapStart - prev;
+        if (ry === 0) wallSeg(segCenter, fixedCoord, segLen, 0);
+        else wallSeg(fixedCoord, segCenter, segLen, Math.PI / 2);
+      }
+      prev = gapEnd;
     });
-    var beam = new THREE.Mesh(new THREE.BoxGeometry(d[2] === 0 ? G * 2 + 0.7 : 0.3, 0.3, d[2] === 0 ? 0.3 : G * 2 + 0.7), frameMat);
-    beam.position.set(d[0], 3.6, d[1]);
-    scene.add(beam);
+    if (halfLen > prev + 0.01) {
+      var segCenter = (prev + halfLen) / 2;
+      var segLen = halfLen - prev;
+      if (ry === 0) wallSeg(segCenter, fixedCoord, segLen, 0);
+      else wallSeg(fixedCoord, segCenter, segLen, Math.PI / 2);
+    }
+  }
+
+  // 外墙（完整无门）
+  wallSeg(0, -S, 2 * S, 0);        // 上
+  wallSeg(0, S, 2 * S, 0);         // 下
+  wallSeg(-S, 0, 2 * S, Math.PI / 2); // 左
+  wallSeg(S, 0, 2 * S, Math.PI / 2);  // 右
+
+  // 内墙（带门洞）
+  // 垂直墙 x=-20, x=20: 门在 z=-40, 0, 40
+  addSegmentedWall(-H, Math.PI / 2, [-2 * H, 0, 2 * H]);
+  addSegmentedWall(H, Math.PI / 2, [-2 * H, 0, 2 * H]);
+  // 水平墙 z=-20, z=20: 门在 x=-40, 0, 40
+  addSegmentedWall(-H, 0, [-2 * H, 0, 2 * H]);
+  addSegmentedWall(H, 0, [-2 * H, 0, 2 * H]);
+
+  // 门框柱子/横梁（12扇门）
+  var frameMat = new THREE.MeshStandardMaterial({ color: 0x1a1014, roughness: 0.9 });
+  DOOR_POSITIONS.forEach(function(dp) {
+    var dx = dp[0], dz = dp[1];
+    // 判断门方向：垂直墙(x固定) or 水平墙(z固定)
+    var isVertical = (dx === -H || dx === H);
+    // 柱子：左右两侧
+    if (isVertical) {
+      // 垂直墙：门沿z轴，柱子沿z方向两侧
+      [-1, 1].forEach(function(s) {
+        var pillar = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.6, 0.3), frameMat);
+        pillar.position.set(dx, 1.8, dz + s * (G + 0.2));
+        scene.add(pillar);
+      });
+      // 横梁
+      var beam = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, G * 2 + 0.7), frameMat);
+      beam.position.set(dx, 3.6, dz);
+      scene.add(beam);
+    } else {
+      // 水平墙：门沿x轴，柱子沿x方向两侧
+      [-1, 1].forEach(function(s) {
+        var pillar = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.6, 0.3), frameMat);
+        pillar.position.set(dx + s * (G + 0.2), 1.8, dz);
+        scene.add(pillar);
+      });
+      // 横梁
+      var beam = new THREE.Mesh(new THREE.BoxGeometry(G * 2 + 0.7, 0.3, 0.3), frameMat);
+      beam.position.set(dx, 3.6, dz);
+      scene.add(beam);
+    }
   });
 
-  createTable(-8, groundY, -2 * H - 8, 0x4a3328);
-  createTable(8, groundY, -2 * H + 8, 0x3a2a20);
-  createTable(12, groundY, 2 * H - 12, 0x5a3a28);
-  createChair(-12, groundY, -2 * H + 4);
-  createChair(10, groundY, -2 * H - 10);
-  createChair(14, groundY, 2 * H - 16);
-  createBed(8, groundY, 2 * H + 8);
-  createBed(-12, groundY, -2 * H - 12);
-  createBookshelf(-6, groundY, 2 * H - 6);
-  createBookshelf(2 * H + 8, groundY, 6);
-  createBookshelf(-2 * H - 8, groundY, -10);
-  createChest(0, groundY, 2 * H + 14);
-  createChest(-2 * H + 12, groundY, 12);
-  createPool(2 * H - 10, groundY, -2 * H - 10);
-  createCabinet(-10, groundY, -2 * H - 14);
-  createCabinet(2 * H + 12, groundY, -12);
-  createRug(0, groundY, 0, 0x884422);
-  createRug(2 * H, groundY, 2 * H, 0x226688);
-  createLamp(-2 * H - 12, groundY, 2 * H + 12);
-  createLamp(2 * H + 12, groundY, -2 * H - 12);
-  createLamp(-2 * H - 12, groundY, -2 * H - 12);
-  createObstacle(2 * H - 8, groundY, -10, 0x334444);
-  createObstacle(2 * H + 10, groundY, 10, 0x443333);
-  createObstacle(-2 * H + 8, groundY, 10, 0x333a44);
-  createObstacle(-2 * H - 10, groundY, -8, 0x3a3344);
-  createChair(-2 * H - 6, groundY, 8);
+  // 家具分布到9个房间（在每个房间随机放一些）
+  ROOMS.forEach(function(rm, idx) {
+    var rx = rm.cx, rz = rm.cz;
+    // 中央房间只放少量家具（保留飞船区域）
+    if (idx === 0) {
+      createRug(rx, groundY, rz, 0x884422);
+      createLamp(rx - 8, groundY, rz - 8);
+      createLamp(rx + 8, groundY, rz + 8);
+      createObstacle(rx - 10, groundY, rz - 10, 0x334444);
+      createObstacle(rx + 10, groundY, rz + 10, 0x443333);
+      return;
+    }
+    // 其他房间随机分配家具
+    var roomFurniture = [
+      function(){ createTable(rx + (Math.random()-0.5)*16, groundY, rz + (Math.random()-0.5)*16, [0x4a3328,0x3a2a20,0x5a3a28][Math.floor(Math.random()*3)]); },
+      function(){ createChair(rx + (Math.random()-0.5)*18, groundY, rz + (Math.random()-0.5)*18); },
+      function(){ createBed(rx + (Math.random()-0.5)*10, groundY, rz + (Math.random()-0.5)*10); },
+      function(){ createBookshelf(rx + (Math.random()-0.5)*12, groundY, rz + (Math.random()-0.5)*12); },
+      function(){ createChest(rx + (Math.random()-0.5)*14, groundY, rz + (Math.random()-0.5)*14); },
+      function(){ createPool(rx + (Math.random()-0.5)*10, groundY, rz + (Math.random()-0.5)*10); },
+      function(){ createCabinet(rx + (Math.random()-0.5)*14, groundY, rz + (Math.random()-0.5)*14); },
+      function(){ createLamp(rx + (Math.random()-0.5)*18, groundY, rz + (Math.random()-0.5)*18); },
+      function(){ createObstacle(rx + (Math.random()-0.5)*16, groundY, rz + (Math.random()-0.5)*16, [0x334444,0x443333,0x333a44,0x3a3344][Math.floor(Math.random()*4)]); },
+    ];
+    // 每个房间放3-5件家具
+    var count = 3 + Math.floor(Math.random() * 3);
+    for (var fi = 0; fi < count; fi++) {
+      var fn = roomFurniture[Math.floor(Math.random() * roomFurniture.length)];
+      fn();
+    }
+  });
 
   // 新增大型障碍物
   createLargeObstacles();
@@ -664,6 +747,165 @@ function pickMinionType() {
   return MONSTER_TYPES[mName] || MONSTER_TYPES["追风怪"];
 }
 
+// 新增抓捕者数据
+var chaserMonster = null; // 抓捕者实例
+var captureState = { captured: false, tapCount: 0, maxTap: 10, dmgTimer: 0, grabCooldown: 0 };
+
+// 生成抓捕者（追捕者） - 巡逻者，遇到角色快速追击并抓捕
+function spawnChaser() {
+  if (chaserMonster && chaserMonster.parent) {
+    scene.remove(chaserMonster);
+    chaserMonster = null;
+  }
+
+  var chaserType = MONSTER_TYPES['追捕者'];
+  var scaledT = scaleMonsterType(chaserType);
+  var g = buildMonsterMesh(scaledT);
+  if (scaledT.scale && scaledT.scale !== 1) g.scale.setScalar(scaledT.scale);
+
+  // 抓捕者初始位置在远离玩家的非中央房间
+  var candidates = ROOMS.filter(function (r) { return !(r.cx === 0 && r.cz === 0); });
+  var room = candidates[Math.floor(Math.random() * candidates.length)];
+  var x = room.cx + (Math.random() - 0.5) * (roomSize - 12);
+  var z = room.cz + (Math.random() - 0.5) * (roomSize - 12);
+  g.position.set(x, groundY, z);
+  scene.add(g);
+
+  g.userData = {
+    radius: 0.9 * (scaledT.scale || 1),
+    active: true,
+    walkPhase: 0,
+    type: scaledT,
+    baseType: chaserType,
+    isBoss: false,
+    isChaser: true,
+    speedMul: 1,
+    homeRoom: room,
+    roamTimer: 0,
+    wanderTarget: null,
+    chaseTimer: 0, // 追击计时器
+    isChasing: false
+  };
+  g.userData.hp = scaledT.hp;
+  chaserMonster = g;
+  chaserLeaveTimer = CHASER_LEAVE_DURATION;
+  showMessage('👁️ 追捕者被释放了! 它在四处巡逻!', 0x4444ff);
+}
+
+// 抓捕者AI更新
+function updateChaser(delta) {
+  if (!chaserMonster || !chaserMonster.parent || !chaserMonster.userData.active) return;
+
+  var m = chaserMonster;
+  var t = m.userData.type;
+  var dist = m.position.distanceTo(player.position);
+
+  // 抓捕冷却
+  if (captureState.grabCooldown > 0) captureState.grabCooldown -= delta;
+
+  var CHASE_RANGE = 18; // 发现玩家的距离
+  var GRAB_RANGE = 1.8; // 抓捕距离
+
+  if (captureState.captured) {
+    // 被抓模式：怪物拖着玩家走
+    // 选择一个拖拽目标位置（远离初始位置，让玩家感受到被拖走）
+    if (!m.userData.dragTarget) {
+      // 随机选一个非中央的房间作为拖拽目标
+      var dragRooms = ROOMS.filter(function(r) { return !(r.cx === 0 && r.cz === 0); });
+      var targetRoom = dragRooms[Math.floor(Math.random() * dragRooms.length)];
+      m.userData.dragTarget = {
+        x: targetRoom.cx + (Math.random() - 0.5) * (roomSize - 12),
+        z: targetRoom.cz + (Math.random() - 0.5) * (roomSize - 12)
+      };
+      console.log('追捕者拖拽目标:', targetRoom.name, m.userData.dragTarget);
+    }
+
+    var dragSpeed = (t.speed || 3.0) * 2.5 * delta;
+    var dt = m.userData.dragTarget;
+    var dDir = new THREE.Vector3(dt.x - m.position.x, 0, dt.z - m.position.z);
+    var dDist = dDir.length();
+    if (dDist > 1.0) {
+      dDir.normalize();
+      var dMove = dDir.clone().multiplyScalar(dragSpeed);
+      m.position.add(dMove);
+      m.rotation.y = Math.atan2(dMove.x, dMove.z);
+      m.userData.walkPhase += delta * 6;
+
+      // 拖拽玩家跟着怪物移动（在怪物身后1.5单位）
+      player.position.x = m.position.x - dDir.x * 1.5;
+      player.position.z = m.position.z - dDir.z * 1.5;
+      player.position.y = groundY;
+    } else {
+      // 到达目标后重新选新目标
+      m.userData.dragTarget = null;
+    }
+
+    // 被抓时发光更强
+    m.children.forEach(function (child, idx) {
+      if (child.isMesh && child.material && child.material.emissive) {
+        child.material.emissiveIntensity = 0.5 + Math.sin(clock.elapsedTime * 5 + idx) * 0.3;
+      }
+    });
+    return;
+  }
+
+  if (dist < CHASE_RANGE && !m.userData.isChasing) {
+    // 发现玩家，开始追击
+    m.userData.isChasing = true;
+    showMessage('⚠️ 追捕者发现你了! 快跑!', 0xff4444);
+  } else if (dist >= CHASE_RANGE * 1.5) {
+    m.userData.isChasing = false;
+  }
+
+  if (m.userData.isChasing) {
+    // 追击模式：快速接近玩家
+    var chaseSpeed = (t.chaseSpeed || 7.0) * delta;
+    var dir = new THREE.Vector3().subVectors(player.position, m.position);
+    dir.y = 0;
+    if (dir.length() > 0) {
+      var move = dir.clone().normalize().multiplyScalar(chaseSpeed);
+      m.position.add(move);
+      m.rotation.y = Math.atan2(move.x, move.z);
+      m.userData.walkPhase += delta * 10;
+    }
+
+    // 检测抓捕
+    if (dist < GRAB_RANGE && captureState.grabCooldown <= 0) {
+      capturePlayer();
+    }
+  } else {
+    // 巡逻模式：随机游荡
+    m.userData.roamTimer = (m.userData.roamTimer || 0) + delta;
+    if (!m.userData.wanderTarget || m.userData.roamTimer > 8) {
+      var rm = ROOMS[Math.floor(Math.random() * ROOMS.length)];
+      m.userData.wanderTarget = {
+        x: rm.cx + (Math.random() - 0.5) * (roomSize - 14),
+        z: rm.cz + (Math.random() - 0.5) * (roomSize - 14)
+      };
+      m.userData.roamTimer = 0;
+    }
+    var speed = (t.speed || 3.0) * 0.6 * delta;
+    var wt = m.userData.wanderTarget;
+    var wDir = new THREE.Vector3(wt.x - m.position.x, 0, wt.z - m.position.z);
+    if (wDir.length() > 0.5) {
+      var wMove = wDir.normalize().multiplyScalar(speed);
+      m.position.add(wMove);
+      m.rotation.y = Math.atan2(wMove.x, wMove.z);
+      m.userData.walkPhase += delta * 3;
+    }
+  }
+
+  // 呼吸起伏
+  m.position.y = groundY + Math.abs(Math.sin(m.userData.walkPhase)) * 0.08;
+
+  // 发光动画
+  m.children.forEach(function (child, idx) {
+    if (child.isMesh && child.material && child.material.emissive) {
+      child.material.emissiveIntensity = 0.2 + Math.sin(clock.elapsedTime * 3 + idx) * 0.15;
+    }
+  });
+}
+
 function initMonsters() {
   monsters.forEach(function(m) { if (m.parent) scene.remove(m); });
   monsters = [];
@@ -716,6 +958,9 @@ function initMonsters() {
   
   centerRoomMonsterTimer = 30;
   centerRoomMonstersSpawned = true; // 不再额外刷怪：全场只有1只小怪+1只Boss
+
+  // 生成抓捕者
+  spawnChaser();
 }
 
 // 中央房间怪物刷新
@@ -1067,8 +1312,8 @@ function spawnItemsInRoom(rm) {
     }
   });
 
-  // 每个房间随机刷新3-8个道具
-  var maxCount = 3 + Math.floor(Math.random() * 6);
+  // 每个房间随机刷新5-10个道具
+  var maxCount = 5 + Math.floor(Math.random() * 6);
   var spawnCount = maxCount - existingCount;
   if (spawnCount <= 0) return;
 
@@ -1262,22 +1507,26 @@ function updateFlashlight(delta) {
     }
   }
   
-  var flashlightEl = document.getElementById('flashlight-status');
-  if (flashlightEl) {
+  var flashlightBtn = document.getElementById('btn-flashlight');
+  if (flashlightBtn) {
     if (GS.hasFlashlight) {
       if (flashlightActive) {
-        flashlightEl.textContent = '🔦 ' + Math.ceil(flashlightDuration) + 's';
-        flashlightEl.style.color = '#ffff44';
+        flashlightBtn.innerHTML = '<span class="icon">🔦</span>' + Math.ceil(flashlightDuration) + 's';
+        flashlightBtn.style.borderColor = 'rgba(255,255,100,0.8)';
+        flashlightBtn.style.background = 'rgba(80,80,30,0.6)';
       } else if (flashlightCooldown > 0) {
-        flashlightEl.textContent = '🔦 冷却' + Math.ceil(flashlightCooldown) + 's';
-        flashlightEl.style.color = '#888844';
+        flashlightBtn.innerHTML = '<span class="icon">🔦</span><span class="cd-text">' + Math.ceil(flashlightCooldown) + 's</span>';
+        flashlightBtn.style.borderColor = 'rgba(100,100,100,0.5)';
+        flashlightBtn.style.background = 'rgba(50,50,50,0.5)';
       } else {
-        flashlightEl.textContent = '🔦 就绪(按F)';
-        flashlightEl.style.color = '#aaaa44';
+        flashlightBtn.innerHTML = '<span class="icon">🔦</span>手电';
+        flashlightBtn.style.borderColor = 'rgba(100,180,255,0.5)';
+        flashlightBtn.style.background = 'rgba(30,60,100,0.55)';
       }
     } else {
-      flashlightEl.textContent = '🔦 未获得';
-      flashlightEl.style.color = '#555';
+      flashlightBtn.innerHTML = '<span class="icon">🔦</span>🔒';
+      flashlightBtn.style.borderColor = 'rgba(100,100,100,0.3)';
+      flashlightBtn.style.background = 'rgba(30,30,30,0.4)';
     }
   }
 }
@@ -1489,4 +1738,144 @@ function updateMonsterHPBar() {
   } else {
     monsterHpEl.style.display = 'none';
   }
+}
+
+// ============================================================
+// 抓捕者系统 - 抓捕/挣脱
+// ============================================================
+function capturePlayer() {
+  if (captureState.captured) return;
+  if (GS.gameOver || !GS.running) return;
+
+  captureState.captured = true;
+  captureState.tapCount = 0;
+  captureState.dmgTimer = 0;
+  captureState.grabCooldown = 15; // 15秒内不会再次被抓
+
+  // 显示挣脱进度条
+  var bar = document.getElementById('capture-bar');
+  if (bar) bar.classList.remove('hidden');
+
+  // 攻击按钮变为挣脱模式
+  var attackBtn = document.getElementById('btn-attack');
+  if (attackBtn) attackBtn.classList.add('capture-mode');
+
+  // 更新UI
+  updateCaptureUI();
+
+  // 玩家不能移动
+  // 播放被抓动画效果
+  if (chaserMonster && chaserMonster.parent) {
+    // 清除之前的拖拽目标，让抓捕者开始拖拽
+    chaserMonster.userData.dragTarget = null;
+    chaserMonster.userData.isChasing = false;
+  }
+  showMessage('🕸️ 追捕者正拖着你离开! 快点击攻击挣脱!', 0xff4444);
+  AudioMgr.playHurt();
+}
+
+function updateCaptureUI() {
+  var pct = Math.min(100, (captureState.tapCount / captureState.maxTap) * 100);
+  var fillEl = document.getElementById('capture-bar-fill');
+  var countEl = document.getElementById('capture-bar-count');
+  if (fillEl) fillEl.style.width = pct + '%';
+  if (countEl) countEl.textContent = captureState.tapCount + '/' + captureState.maxTap;
+}
+
+function onCaptureTap() {
+  if (!captureState.captured) return;
+
+  captureState.tapCount++;
+  updateCaptureUI();
+
+  // 点击反馈
+  AudioMgr.playHit();
+
+  if (captureState.tapCount >= captureState.maxTap) {
+    // 挣脱成功
+    breakFreeFromCapture();
+  }
+}
+
+function breakFreeFromCapture() {
+  captureState.captured = false;
+
+  // 隐藏进度条
+  var bar = document.getElementById('capture-bar');
+  if (bar) bar.classList.add('hidden');
+
+  // 攻击按钮恢复正常
+  var attackBtn = document.getElementById('btn-attack');
+  if (attackBtn) attackBtn.classList.remove('capture-mode');
+
+  showMessage('💪 挣脱成功! 快跑!', 0x44ff88);
+  AudioMgr.playSkill();
+
+  // 重置离开计时器（挣脱后抓捕者还会多待一会儿）
+  chaserLeaveTimer = Math.max(chaserLeaveTimer, 20);
+
+  // 击退抓捕者
+  if (chaserMonster && chaserMonster.parent) {
+    var knockback = new THREE.Vector3().subVectors(chaserMonster.position, player.position);
+    knockback.y = 0;
+    if (knockback.length() > 0) {
+      knockback.normalize().multiplyScalar(5);
+      chaserMonster.position.add(knockback);
+    }
+    // 抓捕者被击退后短暂眩晕，不追击
+    chaserMonster.userData.isChasing = false;
+    captureState.grabCooldown = 10; // 10秒内不会再次被抓
+  }
+}
+
+// 在update中处理抓捕者相关逻辑
+function updateCaptureSystem(delta) {
+  // 抓捕者离开计时器（只在非抓捕状态时倒计时）
+  if (!captureState.captured && chaserMonster && chaserMonster.parent) {
+    chaserLeaveTimer -= delta;
+    if (chaserLeaveTimer <= 0) {
+      // 抓捕者自动离开
+      if (chaserMonster && chaserMonster.parent) {
+        scene.remove(chaserMonster);
+        chaserMonster = null;
+      }
+      showMessage('👋 追捕者离开了，稍后会重新出现', 0x8888ff);
+      // 30秒后重新生成
+      setTimeout(function () {
+        if (GS.running && !GS.gameOver) {
+          spawnChaser();
+        }
+      }, CHASER_RESPAWN_DELAY * 1000);
+      return;
+    }
+  }
+
+  // 被抓期间持续掉血
+  if (captureState.captured) {
+    captureState.dmgTimer += delta;
+    if (captureState.dmgTimer >= 1.0) {
+      captureState.dmgTimer = 0;
+      GS.hp -= 3;
+      if (GS.hp <= 0) {
+        GS.hp = 0;
+        GS.gameOver = true;
+        GS.running = false;
+        captureState.captured = false;
+        var bar = document.getElementById('capture-bar');
+        if (bar) bar.classList.add('hidden');
+        var attackBtn = document.getElementById('btn-attack');
+        if (attackBtn) attackBtn.classList.remove('capture-mode');
+        showGameOver();
+      }
+      updateHUD();
+    }
+  }
+
+  // 抓捕者冷却
+  if (captureState.grabCooldown > 0) {
+    captureState.grabCooldown -= delta;
+  }
+
+  // 更新抓捕者AI
+  updateChaser(delta);
 }

@@ -13,32 +13,37 @@ function update(delta) {
   updateJump(delta);
   updateSkillTimers(delta);
 
-  var moveDir = new THREE.Vector3();
-  if (keys['w'] || keys['arrowup']) moveDir.z -= 1;
-  if (keys['s'] || keys['arrowdown']) moveDir.z += 1;
-  if (keys['a'] || keys['arrowleft']) moveDir.x -= 1;
-  if (keys['d'] || keys['arrowright']) moveDir.x += 1;
+  // 如果被抓住，不能移动
+  if (captureState && captureState.captured) {
+    // 移动键无效
+  } else {
+    var moveDir = new THREE.Vector3();
+    if (keys['w'] || keys['arrowup']) moveDir.z -= 1;
+    if (keys['s'] || keys['arrowdown']) moveDir.z += 1;
+    if (keys['a'] || keys['arrowleft']) moveDir.x -= 1;
+    if (keys['d'] || keys['arrowright']) moveDir.x += 1;
 
-  if (moveDir.length() > 0) {
-    moveDir.normalize();
-    var camDir = new THREE.Vector3(0, 0, -1);
-    camDir.applyQuaternion(camera.quaternion);
-    camDir.y = 0; camDir.normalize();
-    var camRight = new THREE.Vector3(1, 0, 0);
-    camRight.applyQuaternion(camera.quaternion);
-    camRight.y = 0; camRight.normalize();
+    if (moveDir.length() > 0) {
+      moveDir.normalize();
+      var camDir = new THREE.Vector3(0, 0, -1);
+      camDir.applyQuaternion(camera.quaternion);
+      camDir.y = 0; camDir.normalize();
+      var camRight = new THREE.Vector3(1, 0, 0);
+      camRight.applyQuaternion(camera.quaternion);
+      camRight.y = 0; camRight.normalize();
 
-    var moveVec = new THREE.Vector3();
-    moveVec.addScaledVector(camDir, -moveDir.z);
-    moveVec.addScaledVector(camRight, moveDir.x);
-    moveVec.y = 0;
-    if (moveVec.length() > 0) {
-      var _caps = getDynamicCaps();
-      var baseSpeedBonus = Math.min((GS.moveSpeedBonus || 0) + (GS.levelSpeedBonus || 0), _caps.speedCap);
-      moveVec.normalize().multiplyScalar((moveSpeed + baseSpeedBonus) * delta);
-      player.position.add(moveVec);
-      clampPlayer();
-      player.rotation.y = Math.atan2(moveVec.x, moveVec.z);
+      var moveVec = new THREE.Vector3();
+      moveVec.addScaledVector(camDir, -moveDir.z);
+      moveVec.addScaledVector(camRight, moveDir.x);
+      moveVec.y = 0;
+      if (moveVec.length() > 0) {
+        var _caps = getDynamicCaps();
+        var baseSpeedBonus = Math.min((GS.moveSpeedBonus || 0) + (GS.levelSpeedBonus || 0), _caps.speedCap);
+        moveVec.normalize().multiplyScalar((moveSpeed + baseSpeedBonus) * delta);
+        player.position.add(moveVec);
+        clampPlayer();
+        player.rotation.y = Math.atan2(moveVec.x, moveVec.z);
+      }
     }
   }
 
@@ -60,11 +65,18 @@ function update(delta) {
   updateMonster(delta);
   updateItems(delta);
 
+  // 更新角色动画
+  updatePlayerAnimation(delta, clock.elapsedTime);
+  updatePlayerAura(clock.elapsedTime);
+
   // 更新手电筒
   updateFlashlight(delta);
 
   // 更新怪物血条（实时显示）
   updateMonsterHPBar();
+
+  // 更新抓捕者系统
+  updateCaptureSystem(delta);
 
   if (energyOrb && energyOrb.userData.active) {
     // 金色宝箱：轻微浮动 + 光晕脉动
@@ -96,6 +108,15 @@ function update(delta) {
   if (projectiles.length > 500) {
     var excess = projectiles.splice(0, projectiles.length - 300);
     excess.forEach(function (p) { try { scene.remove(p); } catch (e) { } });
+  }
+
+  // 更新移动状态（用于动画）
+  if (moveDir.length() > 0) {
+    playerAnimState.moving = true;
+    playerAnimState.idle = false;
+  } else {
+    playerAnimState.moving = false;
+    playerAnimState.idle = true;
   }
 
   for (var i = projectiles.length - 1; i >= 0; i--) {
@@ -182,7 +203,11 @@ function update(delta) {
       }
     }
     if (p.userData.damage) {
+      // 将抓捕者也加入可攻击目标
       var targetMonsters = monsters.concat(bosses);
+      if (chaserMonster && chaserMonster.parent && chaserMonster.userData.active) {
+        targetMonsters.push(chaserMonster);
+      }
       var hitRegistered = false;
 
       for (var mIdx = 0; mIdx < targetMonsters.length; mIdx++) {
@@ -193,9 +218,11 @@ function update(delta) {
         var hitScale = (tm.userData.type && tm.userData.type.scale) || 1;
 
         if (dist < 1.8 * hitScale) {
-          // 命中伤害限制：Boss至少25发、小怪至少15发子弹才能击杀（根据伤害随机浮动）
-          var minHits = tm.userData.isBoss ? 25 : 15;
-          var perHitCap = Math.ceil((tm.userData.type.hp || 100) / (minHits + Math.random() * 4));
+          // 命中伤害限制：Boss至少25发、小怪10发子弹击杀
+          // 抓捕者也按10发计算
+          var isChaser = (tm === chaserMonster);
+          var minHits = tm.userData.isBoss ? 25 : 10;
+          var perHitCap = Math.ceil((tm.userData.type.hp || 100) / minHits);
           var dealt = Math.max(1, Math.min(p.userData.damage, perHitCap));
           tm.userData.hp -= dealt;
           monsterHitFlash = 0.2;
@@ -284,7 +311,23 @@ function update(delta) {
           }
 
           if (tm.userData.hp <= 0) {
-            onMonsterDefeated(tm);
+            // 判断是否为抓捕者
+            if (tm === chaserMonster) {
+              // 抓捕者被击败
+              tm.userData.active = false;
+              if (tm.parent) scene.remove(tm);
+              chaserMonster = null;
+              showMessage('⚔️ 追捕者被击败了! 稍后会出现新的', 0x44ff88);
+              AudioMgr.playSkill();
+              spawnFragmentDrop(tm.position.clone());
+              // 30秒后重新生成
+              chaserLeaveTimer = 0;
+              setTimeout(function () {
+                if (GS.running && !GS.gameOver) spawnChaser();
+              }, CHASER_RESPAWN_DELAY * 1000);
+            } else {
+              onMonsterDefeated(tm);
+            }
           }
           hitRegistered = true;
           break;
@@ -664,7 +707,7 @@ function wakeAllBosses() {
 
 // ============================================================
 // 小怪巡逻：房间内游荡，停留超过10秒随机去下一个房间
-// （地图为十字布局，跨房间移动经过中央房间的门）
+// （3x3网格地图，相邻房间之间直接通过门移动）
 // ============================================================
 function updateMinionWander(m, t, delta) {
   var speed = (t.speed || 2) * 0.8; // 巡逻速度略慢
@@ -705,19 +748,30 @@ function updateMinionWander(m, t, delta) {
     var candidates = ROOMS.filter(function (r) { return r !== curRoom; });
     var nextRoom = candidates[Math.floor(Math.random() * candidates.length)];
 
+    // 3x3网格路径规划：相邻房间直接走门，不相邻房间经过中间房间
     var waypoints = [];
-    var isCurCenter = (curRoom.cx === 0 && curRoom.cz === 0);
-    var isNextCenter = (nextRoom.cx === 0 && nextRoom.cz === 0);
-    // 十字地图：外围房间之间必须经过中央房间
-    if (!isCurCenter) {
-      // 当前房间通向中央的门（门位于两房间中点方向）
-      waypoints.push({ x: curRoom.cx / 2, z: curRoom.cz / 2 });
-    }
-    if (!isCurCenter && !isNextCenter) {
-      waypoints.push({ x: 0, z: 0 }); // 中央房间中心
-    }
-    if (!isNextCenter) {
-      waypoints.push({ x: nextRoom.cx / 2, z: nextRoom.cz / 2 }); // 通向目标房间的门
+    var cx = curRoom.cx, cz = curRoom.cz;
+    var nx = nextRoom.cx, nz = nextRoom.cz;
+    var H = halfRoom;
+
+    // 判断是否相邻（曼哈顿距离=40）
+    var isAdjacent = (Math.abs(cx - nx) + Math.abs(cz - nz)) <= 40;
+
+    if (isAdjacent) {
+      // 相邻房间：直接通过中间的门
+      var midX = (cx + nx) / 2;
+      var midZ = (cz + nz) / 2;
+      waypoints.push({ x: midX, z: midZ });
+    } else {
+      // 不相邻（对角房间）：经过中间房间的门
+      // 先到当前房间通向中间的门
+      var toMidX = cx === 0 ? 0 : (cx > 0 ? H : -H);
+      var toMidZ = cz === 0 ? 0 : (cz > 0 ? H : -H);
+      waypoints.push({ x: toMidX, z: toMidZ });
+      // 再到目标房间的门
+      var fromMidX = nx === 0 ? 0 : (nx > 0 ? H : -H);
+      var fromMidZ = nz === 0 ? 0 : (nz > 0 ? H : -H);
+      waypoints.push({ x: fromMidX, z: fromMidZ });
     }
     // 目标房间内随机落点
     waypoints.push({
@@ -751,7 +805,7 @@ function updateMinionWander(m, t, delta) {
 }
 
 // ============================================================
-// 小地图
+// 小地图（3x3网格 + 12扇门）
 // ============================================================
 function updateMinimap() {
   var canvas = document.getElementById('minimap-canvas');
@@ -765,15 +819,16 @@ function updateMinimap() {
   var totalX = (halfRoom + 20) * 2, totalZ = (halfRoom + 20) * 2;
   var scale = Math.min(w / totalX, h / totalZ) * 0.9;
   var ox = w / 2, oz = h / 2;
+  var H = halfRoom;
 
   ROOMS.forEach(function (rm) {
     var rx = ox + rm.cx * scale, rz = oz + rm.cz * scale;
     ctx.strokeStyle = 'rgba(200,180,160,0.35)';
     ctx.lineWidth = 1;
-    ctx.strokeRect(rx - halfRoom * scale, rz - halfRoom * scale, roomSize * scale, roomSize * scale);
+    ctx.strokeRect(rx - H * scale, rz - H * scale, roomSize * scale, roomSize * scale);
     if (rm.cx === 0 && rm.cz === 0) {
       ctx.fillStyle = 'rgba(255,215,0,0.08)';
-      ctx.fillRect(rx - halfRoom * scale, rz - halfRoom * scale, roomSize * scale, roomSize * scale);
+      ctx.fillRect(rx - H * scale, rz - H * scale, roomSize * scale, roomSize * scale);
     }
     ctx.fillStyle = 'rgba(200,200,200,0.2)';
     ctx.font = '8px sans-serif';
@@ -781,10 +836,17 @@ function updateMinimap() {
     ctx.fillText(rm.name, rx, rz + 2);
   });
 
-  ctx.fillStyle = 'rgba(100,200,100,0.25)';
+  // 画门（绿色小方块表示门洞）
   var G = DOOR_HALF;
-  [[0, -halfRoom, 0, halfRoom], [0, halfRoom, 0, -halfRoom], [-halfRoom, 0, halfRoom, 0], [halfRoom, 0, -halfRoom, 0]].forEach(function (d) {
-    ctx.fillRect(ox + d[0] * scale - G * scale, oz + d[1] * scale - 2, G * 2 * scale, 4);
+  ctx.fillStyle = 'rgba(100,200,100,0.35)';
+  DOOR_POSITIONS.forEach(function(dp) {
+    var dx = dp[0], dz = dp[1];
+    var isVertical = (dx === -H || dx === H);
+    if (isVertical) {
+      ctx.fillRect(ox + dx * scale - 2, oz + dz * scale - G * scale, 4, G * 2 * scale);
+    } else {
+      ctx.fillRect(ox + dx * scale - G * scale, oz + dz * scale - 2, G * 2 * scale, 4);
+    }
   });
 
   if (ship) {

@@ -477,10 +477,12 @@ body {
     align-items: center;
     gap: 6px
 }
+
 /* 移动端：武器栏在底部，按钮缩小，位于摇杆与按钮区之间 */
 body.is-touch #weapon-bar-wrap {
     bottom: 20px
 }
+
 body.is-touch .weapon-btn {
     width: 60px;
     height: 46px;
@@ -488,12 +490,15 @@ body.is-touch .weapon-btn {
     gap: 1px;
     border-radius: 8px
 }
+
 body.is-touch .weapon-btn .icon {
     font-size: 16px
 }
+
 body.is-touch .weapon-btn .ammo-count {
     font-size: 8px
 }
+
 /* 移动端：隐藏技能状态栏，冷却直接显示在技能按钮上 */
 body.is-touch #skill-bar {
     display: none
@@ -506,6 +511,7 @@ body.is-touch #skill-bar {
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent
 }
+
 #buff-bar {
     position: fixed;
     z-index: 50;
@@ -871,13 +877,13 @@ body.is-touch .go-btn {
     pointer-events: none
 }
 
-/* 操作按钮区：右下角类王者荣耀布局（大攻击键在角落，技能/跳跃环绕） */
+/* 操作按钮区：右下角类王者荣耀布局（大攻击键在角落，技能/跳跃/手电筒环绕） */
 #buttons-zone {
     position: absolute;
     right: 12px;
     bottom: 16px;
-    width: 200px;
-    height: 185px;
+    width: 220px;
+    height: 200px;
     pointer-events: none;
     z-index: 2
 }
@@ -927,6 +933,33 @@ body.is-touch .go-btn {
 #btn-jump {
     right: 34px;
     bottom: 106px
+}
+
+/* 手电筒键：跳跃键上方 */
+#btn-flashlight {
+    right: 34px;
+    bottom: 170px;
+    width: 52px;
+    height: 52px;
+    font-size: 10px;
+    background: rgba(30, 60, 100, 0.55);
+    border-color: rgba(100, 180, 255, 0.5)
+}
+
+#btn-flashlight .icon {
+    font-size: 16px
+}
+
+#btn-flashlight.cooldown {
+    border-color: rgba(100, 100, 100, 0.5);
+    background: rgba(50, 50, 50, 0.5);
+    color: #888
+}
+
+#btn-flashlight .cd-text {
+    font-size: 9px;
+    color: #ffaa44;
+    font-weight: bold
 }
 
 .touch-btn:active {
@@ -998,6 +1031,103 @@ body.is-touch .diff-card {
     font-size: 16px;
 }
 
+/* === 抓捕者挣脱进度条（顶部横幅） === */
+#capture-bar {
+    position: fixed;
+    z-index: 150;
+    top: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(180, 30, 30, 0.85);
+    border: 2px solid rgba(255, 100, 100, 0.6);
+    border-radius: 12px;
+    padding: 6px 16px;
+    max-width: 340px;
+    width: 90%;
+    pointer-events: none;
+    animation: captureBarPulse 1s ease-in-out infinite alternate
+}
+
+#capture-bar.hidden {
+    display: none
+}
+
+@keyframes captureBarPulse {
+    from {
+        box-shadow: 0 0 10px rgba(255, 50, 50, 0.4);
+    }
+
+    to {
+        box-shadow: 0 0 25px rgba(255, 50, 50, 0.8);
+    }
+}
+
+.capture-bar-icon {
+    font-size: 24px
+}
+
+.capture-bar-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px
+}
+
+.capture-bar-title {
+    color: #fff;
+    font-size: 11px;
+    font-weight: bold;
+    white-space: nowrap
+}
+
+.capture-bar-progress {
+    width: 100%;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    overflow: hidden
+}
+
+.capture-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #ff4444, #ffaa00, #44ff88);
+    border-radius: 4px;
+    transition: width 0.12s
+}
+
+.capture-bar-count {
+    color: #ffd700;
+    font-size: 12px;
+    font-weight: bold;
+    text-align: right
+}
+
+/* 攻击按钮在抓捕状态下变色 */
+#btn-attack.capture-mode {
+    background: rgba(200, 50, 50, 0.7) !important;
+    border-color: rgba(255, 100, 100, 0.7) !important;
+    animation: attackBtnPulse 0.6s ease-in-out infinite alternate
+}
+
+@keyframes attackBtnPulse {
+    from {
+        border-color: rgba(255, 100, 100, 0.5);
+    }
+
+    to {
+        border-color: rgba(255, 100, 100, 1);
+    }
+}
+
+to {
+    border-color: rgba(255, 100, 100, 1);
+}
+}
+
 /* === 技能状态栏 === */
 #skill-bar {
     position: fixed;
@@ -1049,7 +1179,7 @@ body.is-touch .diff-card {
     font-size: 12px;
     padding: 4px 8px;
     border-radius: 8px;
-    background: rgba(0,0,0,0.5);
-    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     white-space: nowrap;
 }

@@ -273,11 +273,11 @@ function onMonsterDefeated(m) {
     m.userData.respawnTimer = 10;
     m.userData.deathTime = clock.elapsedTime;
   } else {
-    // 小怪：死亡位置掉落能量碎片，立即刷新
+    // 小怪：死亡位置掉落能量碎片，10秒后刷新
     showMessage('🎉 怪物被击败! 掉落了能量碎片!', 0x44ff88);
     spawnFragmentDrop(m.position.clone());
-    // 小怪立即刷新（极短时间）
-    m.userData.respawnTimer = 0.5;
+    // 小怪10秒后刷新
+    m.userData.respawnTimer = 10;
     m.userData.deathTime = clock.elapsedTime;
   }
   updateHUD();

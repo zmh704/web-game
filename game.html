@@ -102,7 +102,6 @@
       </div>
     </div>
     <div id="hud-right">
-      <div class="hud-item" id="flashlight-status" style="font-size:12px;color:#555;padding:4px 8px">🔦 未获得</div>
       <button class="back-btn" onclick="backToMainMenu()" id="hud-back-btn" title="退出游戏">← 退出</button>
     </div>
   </div>
@@ -144,9 +143,22 @@
       <div id="joystick-knob"></div>
     </div>
     <div id="buttons-zone">
+      <button class="touch-btn" id="btn-flashlight"><span class="icon">🔦</span>手电</button>
       <button class="touch-btn" id="btn-skill"><span class="icon">✨</span>技能</button>
       <button class="touch-btn" id="btn-jump"><span class="icon">⬆️</span>跳跃</button>
       <button class="touch-btn" id="btn-attack"><span class="icon">⚔️</span>攻击</button>
+    </div>
+  </div>
+
+  <!-- 抓捕者挣脱进度条（不遮挡操作按钮，仅显示在顶部） -->
+  <div id="capture-bar" class="hidden">
+    <div class="capture-bar-icon">🕸️</div>
+    <div class="capture-bar-info">
+      <div class="capture-bar-title">被抓住了! 连续点击攻击按钮挣脱!</div>
+      <div class="capture-bar-progress">
+        <div class="capture-bar-fill" id="capture-bar-fill"></div>
+      </div>
+      <div class="capture-bar-count" id="capture-bar-count">0/10</div>
     </div>
   </div>
 

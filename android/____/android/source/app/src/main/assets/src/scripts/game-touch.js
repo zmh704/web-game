@@ -38,12 +38,30 @@ function setupTouchControls() {
     joyZone.addEventListener('touchend', joyEnd, { passive: false });
     joyZone.addEventListener('touchcancel', joyEnd, { passive: false });
 
+    // 视角控制区：不覆盖右上角HUD按钮（退出按钮）
     var lookZone = document.getElementById('touch-look-zone');
     var lookId = null, lastX = 0, lastY = 0;
+    // 限制视角区不拦截右上角退出按钮的点击区域（右上方约80px区域）
+    var hudRightRect = null;
+    function getHudRightRect() {
+        var el = document.getElementById('hud-right');
+        if (el) {
+            var r = el.getBoundingClientRect();
+            hudRightRect = { right: r.right, top: r.top, bottom: r.bottom, left: r.left };
+        }
+    }
+    function isInHudRight(x, y) {
+        if (!hudRightRect) return false;
+        return x >= hudRightRect.left && x <= hudRightRect.right && y >= hudRightRect.top && y <= hudRightRect.bottom;
+    }
     lookZone.addEventListener('touchstart', function (e) {
         e.preventDefault();
+        getHudRightRect();
         if (lookId !== null) return;
-        var t = e.changedTouches[0]; lookId = t.identifier; lastX = t.clientX; lastY = t.clientY;
+        var t = e.changedTouches[0];
+        // 如果触摸点在HUD按钮区域，不拦截
+        if (isInHudRight(t.clientX, t.clientY)) return;
+        lookId = t.identifier; lastX = t.clientX; lastY = t.clientY;
     }, { passive: false });
     lookZone.addEventListener('touchmove', function (e) {
         e.preventDefault();
@@ -62,4 +80,14 @@ function setupTouchControls() {
     bindBtn('btn-attack', attack);
     bindBtn('btn-jump', tryJump);
     bindBtn('btn-skill', useSkill);
+    bindBtn('btn-flashlight', toggleFlashlight);
+
+    // 退出按钮单独绑定touch事件（HUD区域）
+    var backBtn = document.getElementById('hud-back-btn');
+    if (backBtn) {
+        backBtn.addEventListener('touchstart', function (e) {
+            e.stopPropagation();
+            backToMainMenu();
+        }, { passive: false });
+    }
 }
