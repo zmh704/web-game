@@ -43,7 +43,11 @@ var GS = {
   levelSpeedBonus: 0,       // 等级增加的速度
   usedQuestions: null,       // 已用题目索引（每局重置）
   hasFlashlight: false,      // 是否拥有手电筒
-  weaponAmmo: {}             // 武器弹药数
+  weaponAmmo: {},             // 武器弹药数
+  // 联机模式字段
+  mode: 'single',              // 'single' | 'multiplayer'
+  isHost: false,               // 联机模式下是否为"主机"
+  playerId: null               // 联机模式下的玩家ID
 };
 
 // ============================================================
@@ -298,7 +302,26 @@ function updateHUD() {
   document.getElementById('energy-text').textContent = deposited + '/' + eMax;
   document.getElementById('energy-fill').style.width = (deposited / eMax * 100) + '%';
   var subEl = document.getElementById('energy-sub');
-  if (subEl) subEl.textContent = deposited >= eMax ? '🚀 回飞船起飞!' : '🔹 碎片: ' + (GS.fragments || 0) + '/2';
+  if (subEl) {
+    if (deposited >= eMax) {
+      subEl.textContent = '🚀 回飞船起飞!';
+    } else {
+      subEl.textContent = '🔹 碎片: ' + (GS.fragments || 0) + '/2';
+    }
+    // 联机模式：显示所有玩家能量进度
+    if (GS.mode === 'multiplayer' && typeof PeerManager !== 'undefined') {
+      var others = getAllOtherPlayerEnergy();
+      if (others && others.length > 0) {
+        var energyParts = [];
+        others.forEach(function (o) {
+          energyParts.push(o.name + ': ' + o.energy + '/' + eMax);
+        });
+        if (energyParts.length > 0) {
+          subEl.textContent += ' | ' + energyParts.join(' ');
+        }
+      }
+    }
+  }
   // 更新角色等级
   var lvlEl = document.getElementById('level-text');
   if (lvlEl) lvlEl.textContent = 'Lv.' + (GS.level || 1);
@@ -306,6 +329,83 @@ function updateHUD() {
     document.getElementById('monster-hp-fill').style.width = (GS.monsterHp / GS.monsterMaxHp * 100) + '%';
   }
   updateBuffs();
+  // 更新联机玩家列表 HUD
+  updateMPPlayerList();
+  // 更新连接状态
+  updateConnectionStatus();
+}
+
+// 获取所有其他玩家的能量进度（联机模式）
+function getAllOtherPlayerEnergy() {
+  if (typeof PeerManager === 'undefined') return null;
+  var result = [];
+  for (var pid in PeerManager.players) {
+    if (pid !== PeerManager.playerId) {
+      var p = PeerManager.players[pid];
+      result.push({
+        name: p.name || '玩家',
+        energy: p.energy || 0,
+        fragments: p.fragments || 0,
+        isHost: p.isHost || false
+      });
+    }
+  }
+  return result.length > 0 ? result : null;
+}
+
+// 获取对方的能量进度（联机模式，保留向后兼容）
+function getOtherPlayerEnergy() {
+  var all = getAllOtherPlayerEnergy();
+  if (all && all.length > 0) return all[0];
+  return null;
+}
+
+// 更新联机玩家列表 HUD
+function updateMPPlayerList() {
+  if (GS.mode !== 'multiplayer') return;
+  var container = document.getElementById('mp-player-list-content');
+  var titleEl = document.getElementById('mp-player-list');
+  if (!container || !titleEl) return;
+  titleEl.classList.remove('hidden');
+
+  container.innerHTML = '';
+  var players = PeerManager.getPlayerList();
+  var eMax = GS.energyMax || 5;
+  players.forEach(function (p) {
+    var item = document.createElement('div');
+    item.className = 'mp-player-list-item';
+    var isSelf = p.id === PeerManager.playerId;
+    // 使用玩家实际HP：自己有 GS.hp，远程玩家从 PeerManager.players 读取
+    var hp = isSelf ? GS.hp : (PeerManager.players[p.id] && PeerManager.players[p.id].hp ? PeerManager.players[p.id].hp : GS.hp);
+    // 读取玩家能量
+    var energy = isSelf ? GS.energy : (PeerManager.players[p.id] ? PeerManager.players[p.id].energy || 0 : 0);
+    var fragments = isSelf ? GS.fragments : (PeerManager.players[p.id] ? PeerManager.players[p.id].fragments || 0 : 0);
+    item.innerHTML = '<span class="dot online"></span>' +
+      '<span class="name">' + (p.isHost ? '👑 ' : '') + (typeof escapeHtml === 'function' ? escapeHtml(p.name || '玩家') : (p.name || '玩家')) + (isSelf ? ' (我)' : '') + '</span>' +
+      '<span class="hp-bar-mini"><span class="hp-fill-mini" style="width:' + Math.max(0, hp) + '%"></span></span>' +
+      '<span class="energy-bar-mini">🔋' + energy + '/' + eMax + '</span>';
+    container.appendChild(item);
+  });
+}
+
+// 更新连接状态指示器
+function updateConnectionStatus() {
+  var el = document.getElementById('connection-status');
+  if (!el) return;
+  if (GS.mode !== 'multiplayer') {
+    el.classList.add('hidden');
+    return;
+  }
+  el.classList.remove('hidden');
+  if (PeerManager.connected) {
+    el.className = 'connected';
+    el.textContent = '📡';
+    el.title = '已连接';
+  } else {
+    el.className = 'disconnected';
+    el.textContent = '📡';
+    el.title = '连接断开';
+  }
 }
 
 // 更新增益状态栏

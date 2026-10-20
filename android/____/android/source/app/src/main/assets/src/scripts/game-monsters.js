@@ -240,6 +240,16 @@ function spawnFragmentDrop(pos) {
 
 // 碎片漂浮动画与拾取检测（在update循环中调用）
 function updateFragments(delta) {
+  // 联机加入者模式：跳过本地拾取，只更新动画
+  if (GS.mode === 'multiplayer' && !GS.isHost) {
+    for (var fi = 0; fi < fragmentDrops.length; fi++) {
+      var ff = fragmentDrops[fi];
+      ff.position.y = 0.8 + Math.sin(clock.elapsedTime * 2.5 + ff.userData.floatPhase) * 0.15;
+      ff.rotation.y += delta * 2;
+    }
+    return;
+  }
+
   for (var i = fragmentDrops.length - 1; i >= 0; i--) {
     var f = fragmentDrops[i];
     f.position.y = 0.8 + Math.sin(clock.elapsedTime * 2.5 + f.userData.floatPhase) * 0.15;
@@ -281,6 +291,17 @@ function onMonsterDefeated(m) {
     m.userData.deathTime = clock.elapsedTime;
   }
   updateHUD();
+
+  // 联机模式：主机广播怪物死亡事件，通知加入者刷碎片
+  if (GS.mode === 'multiplayer' && GS.isHost && typeof PeerManager !== 'undefined') {
+    PeerManager.broadcast('game_event', {
+      event: 'monster_defeated',
+      monsterId: m.userData.netId || 'unknown',
+      x: m.position.x,
+      z: m.position.z,
+      isBoss: isBoss
+    });
+  }
 
   // 死亡动效：螺旋升天
   var escapeInterval = setInterval(function () {

@@ -1,9 +1,11 @@
-const CACHE_NAME = 'miracle-forest-v1';
+const CACHE_NAME = 'miracle-forest-v8';
 const ASSETS = [
   'game.html',
   'manifest.json',
   'icons/icon-192.svg',
-  'icons/icon-512.svg'
+  'icons/icon-512.svg',
+  'src/scripts/game-network.js',
+  'src/scripts/game-sync.js'
 ];
 
 self.addEventListener('install', (event) => {

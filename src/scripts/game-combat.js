@@ -1,8 +1,124 @@
 // ============================================================
+// 联机战斗辅助（主机权威结算）
+// ============================================================
+
+// 按 netId 在小怪/Boss 列表中查找怪物
+function findMonsterByNetId(netId) {
+  if (!netId) return null;
+  if (typeof monsters !== 'undefined') {
+    for (var i = 0; i < monsters.length; i++) {
+      if (monsters[i] && monsters[i].userData && monsters[i].userData.netId === netId) return monsters[i];
+    }
+  }
+  if (typeof bosses !== 'undefined') {
+    for (var j = 0; j < bosses.length; j++) {
+      if (bosses[j] && bosses[j].userData && bosses[j].userData.netId === netId) return bosses[j];
+    }
+  }
+  return null;
+}
+
+// 对怪物造成伤害：加入者上报主机由主机权威结算，主机/单机本地结算。
+// 返回 true 表示本地已确认击杀（仅主机/单机会返回 true，加入者恒为 false）。
+function dealMonsterDamage(m, dealt, isChaser) {
+  if (!m || !m.userData) return false;
+  if (GS.mode === 'multiplayer' && !GS.isHost) {
+    // 加入者：本地先做**预测扣血**，让血条立刻动起来，再上报主机权威结算。
+    //
+    // 原来本地一行都不改，只能干等主机的快照把新血量带回来 —— 手机上
+    // 快照一抖（主机切后台 / 掉帧 / 网络抖动），玩家打了好几下
+    // 血条纹丝不动，看起来就是"加入者打怪不掉血"。
+    // 快照到来时 _syncMonsters 会用主机结算后的真实 hp 整体覆盖，
+    // 所以这里的预测不会被重复计算；主机若拒收（见 monster_damage_reject）
+    // 会通知本地把血补回去。
+    if (typeof dealt === 'number' && isFinite(dealt) && dealt > 0) {
+      m.userData.hp = Math.max(0, (m.userData.hp || 0) - dealt);
+      // 记下预测时间：_syncMonsters 在这个窗口内不会用快照里的旧血量
+      // 把预测盖掉（主机还没处理到 monster_damage 时快照里还是满血）。
+      m.userData.localHpAt = Date.now();
+    }
+    if (typeof PeerManager !== 'undefined') {
+      PeerManager.broadcast('monster_damage', {
+        netId: m.userData.netId || null,
+        dmg: dealt,
+        isChaser: !!isChaser
+      });
+    }
+    return false;
+  }
+  // 主机 / 单机：本地权威结算
+  m.userData.hp -= dealt;
+  return m.userData.hp <= 0;
+}
+
+// 返回距离 fromPos 最近的「还活着」的玩家位置；全员倒地时返回 null。
+//
+// 为什么必须排除倒地玩家：
+//   怪物的近战逻辑是「dist > 2.5 才移动，进入 2.5 内就停下来打」。
+//   玩家倒地后如果不被排除，怪物会一路贴到尸体旁停下，
+//   而 monsterAttack 又被 GS.downed 拦掉 —— 表现就是**怪物贴着你一动不动**。
+//   倒地期间怪物应该转去追还活着的队友，而不是围着尸体打转。
+function nearestAlivePlayerPos(fromPos) {
+  if (!player || !fromPos) return null;
+  var best = null, bestD = Infinity;
+
+  // 自己：没倒地且血量 > 0 才算活人
+  if (!GS.downed && currentPlayerHp() > 0) {
+    best = player.position.clone();
+    bestD = fromPos.distanceTo(player.position);
+  }
+
+  // 队友（只有主机持有其他人的位置）
+  if (GS.mode === 'multiplayer' && GS.isHost && typeof PeerManager !== 'undefined') {
+    for (var pid in PeerManager.players) {
+      if (pid === PeerManager.playerId) continue;
+      var pp = PeerManager.players[pid];
+      if (!pp || !pp.position) continue;
+      if (pp.downed) continue;
+      if (typeof pp.hp === 'number' && pp.hp <= 0) continue;
+      var dx = fromPos.x - pp.position.x, dz = fromPos.z - pp.position.z;
+      var d = Math.sqrt(dx * dx + dz * dz);
+      if (d < bestD) {
+        bestD = d;
+        best = new THREE.Vector3(pp.position.x, player.position.y, pp.position.z);
+      }
+    }
+  }
+  return best;
+}
+
+// 返回距离 fromPos 最近的玩家位置（联机主机端把加入者也纳入目标）。
+// 优先返回活人；全员倒地时退回所有人里最近的一个，保证调用方拿到有效坐标。
+function nearestPlayerPos(fromPos) {
+  if (!player) return fromPos;
+  var alive = nearestAlivePlayerPos(fromPos);
+  if (alive) return alive;
+
+  var best = player.position;
+  if (GS.mode === 'multiplayer' && GS.isHost && typeof PeerManager !== 'undefined') {
+    var bestD = fromPos.distanceTo(player.position);
+    for (var pid in PeerManager.players) {
+      if (pid === PeerManager.playerId) continue;
+      var pp = PeerManager.players[pid];
+      if (pp && pp.position) {
+        var dx = fromPos.x - pp.position.x, dz = fromPos.z - pp.position.z;
+        var d = Math.sqrt(dx * dx + dz * dz);
+        if (d < bestD) {
+          bestD = d;
+          best = new THREE.Vector3(pp.position.x, player.position.y, pp.position.z);
+        }
+      }
+    }
+  }
+  return best;
+}
+
+// ============================================================
 // 技能系统
 // ============================================================
 function useSkill() {
   if (GS.gameOver || !GS.running || GS.countdown > 0) return;
+  if (GS.downed) return;   // 倒地待救时不能放技能
   if (!GS.skillReady) return;
   if (GS.skillCooldown > 0) return;
   // 安全检查：场景和玩家是否就绪
@@ -19,6 +135,18 @@ function useSkill() {
   playSkillAnimation();
   GS.skillCooldown = GS.skillCooldownTime; // 20秒冷却
   GS.skillActive = GS.skillDuration; // 3秒持续
+
+  // 把"谁在哪儿放技能"广播出去，队友端据此在原地画对应颜色的光环。
+  // 技能本身是本地状态机（疾风/护盾/飞行）没法简单复制，所以只同步视觉。
+  broadcastAttackFx({
+    kind: 'skill',
+    character: GS.character,
+    x: player ? player.position.x : 0,
+    y: player ? player.position.y : 0,
+    z: player ? player.position.z : 0,
+    color: GS.character === 'qike' ? 0xff8800
+      : (GS.character === 'baba' ? 0x8fd6ff : 0x9944ff)
+  });
 
   var isQike = GS.character === 'qike';
   if (isQike) {
@@ -64,7 +192,11 @@ function useSkill() {
     }
 
     var trailInterval = setInterval(function () {
-      if (!GS.running) return clearInterval(trailInterval);
+      // 技能持续时间结束后必须停掉，否则会一直以 20Hz 生成拖尾粒子（原来只判 GS.running）
+      if (!GS.running || GS.gameOver || GS.skillActive <= 0) {
+        clearInterval(trailInterval);
+        return;
+      }
       for (var t = 0; t < 3; t++) {
         var trail = new THREE.Mesh(
           new THREE.SphereGeometry(0.08, 6, 6),
@@ -88,6 +220,37 @@ function useSkill() {
 
     // 创建技能光环
     createPlayerAura(0xff8800, 0.5);
+
+  } else if (GS.character === 'baba') {
+    // 爸爸：🕊️ 飞行 —— 离地悬停 3 秒。
+    // 和奇奇(地面提速)、妙妙(减伤)区分开：爸爸是机动型，能正面躲开地面怪物的近身攻击。
+    showMessage('🕊️ 起飞! (持续3秒，按住跳跃键继续爬升)', 0x8fd6ff);
+    AudioMgr.playSkill();
+
+    if (typeof startFlight === 'function') startFlight();
+
+    // 起飞气流：脚下一圈向上飘的环
+    for (var u = 0; u < 3; u++) {
+      (function (idx) {
+        setTimeout(function () {
+          if (!GS.running || !player) return;
+          var gust = new THREE.Mesh(
+            new THREE.TorusGeometry(0.42 + idx * 0.12, 0.05, 8, 18),
+            new THREE.MeshBasicMaterial({ color: 0x8fd6ff, transparent: true, opacity: 0.7 })
+          );
+          gust.position.copy(player.position);
+          gust.position.y += 0.1;
+          gust.rotation.x = Math.PI / 2;
+          gust.userData = { life: 0.6, fade: true, vel: new THREE.Vector3(0, 2.6, 0) };
+          scene.add(gust);
+          projectiles.push(gust);
+        }, idx * 80);
+      })(u);
+    }
+
+    // 空中水平机动比走路快，这样飞行才有意义
+    moveSpeed = Math.max(moveSpeed, 9.5);
+    createPlayerAura(0x8fd6ff, 0.5);
 
   } else {
     showMessage('🛡️ 能量护盾! (持续3秒)', 0x9944ff);
@@ -189,28 +352,28 @@ function updateSkillHUD() {
 
   if (GS.skillActive > 0) {
     // 技能激活中
-    statusEl.textContent = '⚡ 激活中 ' + Math.ceil(GS.skillActive) + 's';
-    statusEl.style.color = '#44ff88';
+    statusEl.textContent = '激活中 ' + Math.ceil(GS.skillActive) + 's';
+    statusEl.style.color = '#17a86a';
     cdFillEl.style.width = '100%';
-    cdFillEl.style.background = 'linear-gradient(90deg, #44ff88, #88ffcc)';
+    cdFillEl.style.background = 'linear-gradient(90deg, #59e0b6, #16a97a)';
     cdTextEl.textContent = '持续 ' + Math.ceil(GS.skillActive) + 's';
     if (skillBtn) skillBtn.innerHTML = '<span class="icon">✨</span>⚡' + Math.ceil(GS.skillActive) + 's';
   } else if (GS.skillCooldown > 0) {
     // 冷却中
     var cdPct = ((GS.skillCooldownTime - GS.skillCooldown) / GS.skillCooldownTime * 100);
-    statusEl.textContent = '⏳ 冷却 ' + Math.ceil(GS.skillCooldown) + 's';
-    statusEl.style.color = '#ff8844';
+    statusEl.textContent = '冷却 ' + Math.ceil(GS.skillCooldown) + 's';
+    statusEl.style.color = '#d1720a';
     cdFillEl.style.width = cdPct + '%';
-    cdFillEl.style.background = 'linear-gradient(90deg, #ff8844, #ffcc44)';
+    cdFillEl.style.background = 'linear-gradient(90deg, #ffa64d, #f2b53c)';
     cdTextEl.textContent = '冷却 ' + Math.ceil(GS.skillCooldown) + 's';
     if (skillBtn) skillBtn.innerHTML = '<span class="icon">✨</span>' + Math.ceil(GS.skillCooldown) + 's';
   } else {
     // 就绪
-    statusEl.textContent = '✨ 技能就绪';
-    statusEl.style.color = '#ffd700';
+    statusEl.textContent = '技能就绪';
+    statusEl.style.color = '#cf8f16';
     cdFillEl.style.width = '100%';
-    cdFillEl.style.background = 'linear-gradient(90deg, #ffd700, #ffcc44)';
-    cdTextEl.textContent = '就绪';
+    cdFillEl.style.background = 'linear-gradient(90deg, #ffd166, #f0a83a)';
+    cdTextEl.textContent = '';
     if (skillBtn) skillBtn.innerHTML = '<span class="icon">✨</span>技能';
   }
 }
@@ -224,8 +387,13 @@ function updateSkillTimers(delta) {
       GS.skillActive = 0;
       // 技能结束
       if (GS.character === 'qike') {
-        moveSpeed = 5;
+        moveSpeed = (typeof BASE_MOVE_SPEED !== 'undefined') ? BASE_MOVE_SPEED : 5;
         showMessage('⚡ 疾风冲刺结束', 0xff8800);
+      } else if (GS.character === 'baba') {
+        // 结束飞行：交还给重力自由下落，同时把被飞行改写的移速恢复
+        if (typeof endFlight === 'function') endFlight();
+        moveSpeed = (typeof BASE_MOVE_SPEED !== 'undefined') ? BASE_MOVE_SPEED : 5;
+        showMessage('🕊️ 飞行结束，准备落地', 0x8fd6ff);
       } else {
         GS._shielded = false;
         // 移除护盾视觉
@@ -256,6 +424,174 @@ function updateSkillTimers(delta) {
 // ============================================================
 // 攻击系统
 // ============================================================
+// 攻击特效同步
+//
+// 问题：走位、血条、怪物状态都同步了，但**攻击动作和特效是本地的** ——
+// 你在自己屏幕上放了一炮，队友那边只看到怪物的血条掉了，看不到你打。
+//
+// 做法：开火 / 挥棒 / 放技能时广播一条轻量事件，队友端按事件在原地重建
+// 一份**纯装饰**的特效（不结算任何伤害，伤害仍然走 monster_damage 由主机权威结算）。
+// ============================================================
+function broadcastAttackFx(data) {
+  if (typeof GS === 'undefined' || GS.mode !== 'multiplayer') return;
+  if (typeof PeerManager === 'undefined' || !PeerManager.broadcast) return;
+  if (!PeerManager.ws || PeerManager.ws.readyState !== 1) return;
+  PeerManager.broadcast('attack_fx', data);
+}
+
+/**
+ * 队友端：按收到的事件重建特效。
+ * 这里创建的所有东西都不带 damage，只负责"看起来像真的在打"。
+ */
+function spawnRemoteAttackFx(data, fromPeerId) {
+  if (!data || !data.kind) return;
+  if (typeof scene === 'undefined' || !scene) return;
+
+  // 让发起攻击的那个队友模型也挥一下手臂 —— 只有子弹飞出来、人却站着不动很怪
+  if (fromPeerId && typeof SyncManager !== 'undefined' && SyncManager.remotePlayers) {
+    var _rp = SyncManager.remotePlayers[fromPeerId];
+    if (_rp) _rp.attackAnim = 0.38;
+  }
+
+  if (data.kind === 'shot') {
+    // 复刻一发同款弹药，但 damage = 0、标记 cosmeticShot，
+    // 更新循环里命中怪物只出爆点和闪白，不扣血、不击退、不判定击杀。
+    var pseudoWeapon = {
+      type: data.wtype || 'arrow',
+      color: data.color || 0xffd700,
+      speed: data.speed || 30
+    };
+    var proj = buildProjectileMesh(pseudoWeapon);
+    proj.position.set(data.x || 0, data.y || 1.2, data.z || 0);
+    var dir = new THREE.Vector3(data.dx || 0, 0, data.dz || -1);
+    if (dir.lengthSq() < 0.0001) dir.set(0, 0, -1);
+    dir.normalize();
+    proj.rotation.y = -Math.atan2(dir.x, dir.z);
+
+    var sShell = proj.userData.shell;
+    var sRing = proj.userData.ring;
+    proj.userData = {
+      vel: dir.clone().multiplyScalar(pseudoWeapon.speed),
+      life: 1.8,
+      damage: 0,
+      weapon: pseudoWeapon,
+      spinPhase: Math.random() * Math.PI * 2,
+      cosmeticShot: true,
+      fxColor: pseudoWeapon.color
+    };
+    if (sShell) proj.userData.shell = sShell;
+    if (sRing) proj.userData.ring = sRing;
+    scene.add(proj);
+    projectiles.push(proj);
+
+    if (window.VX && VX.vfx) {
+      VX.vfx.muzzle(proj.position.clone(), dir.clone(), pseudoWeapon.color);
+    }
+    return;
+  }
+
+  if (data.kind === 'slash') {
+    // 近战挥砍：复用本地同款 slash 特效，参数保持一致，两边看起来才一样
+    var color = data.color || 0xffe08a;
+    var sdir = new THREE.Vector3(data.dx || 0, 0, data.dz || -1);
+    if (sdir.lengthSq() < 0.0001) sdir.set(0, 0, -1);
+    sdir.normalize();
+    var spos = new THREE.Vector3(data.x || 0, data.y || 0.92, data.z || 0);
+    if (window.VX && VX.vfx) {
+      VX.vfx.slash(spos, sdir, color, { radius: 1.85, arc: 2.25, life: 0.26 });
+    } else {
+      // 兜底：没有 VFX 层时至少画一道弧
+      var arc = new THREE.Mesh(
+        new THREE.TorusGeometry(1.0, 0.055, 6, 20, Math.PI * 0.9),
+        new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
+      );
+      arc.position.copy(spos);
+      arc.rotation.x = Math.PI / 2;
+      arc.rotation.z = Math.atan2(sdir.x, sdir.z);
+      arc.userData = { life: 0.28, fade: true };
+      scene.add(arc);
+      projectiles.push(arc);
+    }
+    return;
+  }
+
+  if (data.kind === 'skill') {
+    // 队友放技能：在「他的位置」放一圈特征色光环。
+    // 不要调 createPlayerAura —— 那个是围着自己（player）生成的，会放错位置。
+    var auraColor = data.color || 0xcc88ff;
+    var ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.7, 0.05, 8, 22),
+      new THREE.MeshBasicMaterial({ color: auraColor, transparent: true, opacity: 0.8 })
+    );
+    ring.position.set(data.x || 0, (data.y || 0) + 0.3, data.z || 0);
+    ring.rotation.x = Math.PI / 2;
+    ring.userData = { life: 0.7, fade: true, expandSpeed: 3.2 };
+    scene.add(ring);
+    projectiles.push(ring);
+    return;
+  }
+
+  if (data.kind === 'impact') {
+    if (window.VX && VX.vfx) {
+      var ic = data.color || 0xffffff;
+      VX.vfx.impact(
+        new THREE.Vector3(data.x || 0, data.y || 1, data.z || 0),
+        ic, { scale: 0.9, chipColor: ic, chipCount: 8 }
+      );
+    }
+  }
+}
+
+// ============================================================
+// 按武器类型构建弹药外观
+//
+// 原来这段是写死在 attack() 里的，队友端要画一样的子弹只能复制一份，
+// 复制两份就会漂移（改了一处忘另一处）。抽成函数，本地和「队友攻击特效」共用。
+// ============================================================
+function buildProjectileMesh(w) {
+  var proj;
+  if (w.type === 'beam') {
+    var beamGeo = new THREE.CylinderGeometry(0.08, 0.12, 0.6, 8);
+    var beamMat = new THREE.MeshStandardMaterial({
+      color: w.color, emissive: w.color, emissiveIntensity: 0.8, transparent: true, opacity: 0.9
+    });
+    proj = new THREE.Mesh(beamGeo, beamMat);
+    proj.rotation.z = Math.PI / 2;
+    var tip = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.25, 8), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 }));
+    tip.rotation.z = -Math.PI / 2; tip.position.x = 0.4; proj.add(tip);
+    var aura = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.18, 0.65, 8), new THREE.MeshBasicMaterial({ color: w.color, transparent: true, opacity: 0.15 }));
+    aura.rotation.z = Math.PI / 2; proj.add(aura);
+  } else if (w.type === 'orb') {
+    var orbMat = new THREE.MeshStandardMaterial({ color: w.color, emissive: w.color, emissiveIntensity: 0.7, transparent: true, opacity: 0.85 });
+    proj = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 12), orbMat);
+    var core = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 }));
+    proj.add(core);
+    var shellGeo = new THREE.TetrahedronGeometry(0.22);
+    var shell = new THREE.Mesh(shellGeo, new THREE.MeshBasicMaterial({ color: w.color, transparent: true, opacity: 0.25, wireframe: true }));
+    proj.add(shell);
+    proj.userData.shell = shell;
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.02, 8, 16), new THREE.MeshBasicMaterial({ color: w.color, transparent: true, opacity: 0.4 }));
+    ring.rotation.x = Math.PI / 2; proj.add(ring);
+    proj.userData.ring = ring;
+  } else {
+    var arrowMat = new THREE.MeshStandardMaterial({ color: w.color, emissive: w.color, emissiveIntensity: 0.6, transparent: true, opacity: 0.9 });
+    var arrowShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.5, 6), arrowMat);
+    arrowShaft.rotation.z = Math.PI / 2;
+    proj = new THREE.Group();
+    proj.add(arrowShaft);
+    var arrowHead = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.2, 6), arrowMat);
+    arrowHead.rotation.z = -Math.PI / 2; arrowHead.position.x = 0.35; proj.add(arrowHead);
+    var featherMat = new THREE.MeshBasicMaterial({ color: 0xaaccff, transparent: true, opacity: 0.6 });
+    [-0.2, -0.25].forEach(function (px) {
+      var feather = new THREE.Mesh(new THREE.PlaneGeometry(0.08, 0.12), featherMat);
+      feather.position.set(px, 0.05, 0); proj.add(feather);
+    });
+    var glow = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.52, 6), new THREE.MeshBasicMaterial({ color: w.color, transparent: true, opacity: 0.2 }));
+    glow.rotation.z = Math.PI / 2; proj.add(glow);
+  }
+  return proj;
+}
+
 function attack() {
   // 如果被抓住，攻击按钮变为挣脱（需等待game-scene.js加载）
   if (typeof captureState !== 'undefined' && captureState && captureState.captured) {
@@ -263,6 +599,7 @@ function attack() {
     return;
   }
 
+  if (GS.downed) return;   // 倒地待救时不能攻击
   if (attackCooldown > 0 || !GS.curWeapon || !GS.weapons[GS.curWeapon] || GS.gameOver || !GS.running) return;
   var w = GS.weapons[GS.curWeapon];
 
@@ -305,20 +642,26 @@ function attack() {
   updateWeaponBar();
   // 攻击速度宝石减少冷却时间
   var _caps = getDynamicCaps();
-  attackCooldown = Math.max(0.15, 0.5 - Math.min((GS.atkSpeedBonus || 0), _caps.atkSpeedCap));
+  var _pc2 = (typeof BALANCE !== 'undefined' && BALANCE.player) ? BALANCE.player : {};
+  attackCooldown = Math.max(_pc2.minCooldown || 0.15,
+    (_pc2.rangedCooldown || 0.5) - Math.min((GS.atkSpeedBonus || 0), _caps.atkSpeedCap));
   AudioMgr.playAttack();
   playAttackAnimation();
   var w = GS.weapons[GS.curWeapon];
   var dmg = w.dmg + Math.min((GS.atkBonus || 0) + (GS.levelAtkBonus || 0), _caps.atkCap);  // 攻击宝石+等级增加攻击力（动态上限）
 
   if (GS.character === 'qike' && GS.skillActive > 0) dmg *= 1.5;
+  else if (GS.character === 'baba' && GS.skillActive > 0) dmg *= 1.3;
 
   var dir = new THREE.Vector3(0, 0, -1);
   dir.applyQuaternion(camera.quaternion);
   dir.y = 0; dir.normalize();
 
-  // 辅助瞄准：寻找最近且与玩家方向接近的活跃怪物
+  // 辅助瞄准：寻找最近且与玩家方向接近的活跃怪物（含追捕者）
   var allActiveMonsters = monsters.concat(bosses);
+  if (typeof chaserMonster !== 'undefined' && chaserMonster && chaserMonster.parent && chaserMonster.userData.active) {
+    allActiveMonsters.push(chaserMonster);
+  }
   var closestMon = null, closestDot = -1;
   allActiveMonsters.forEach(function (m) {
     if (!m.userData.active) return;
@@ -342,46 +685,7 @@ function attack() {
     dir.lerp(aimDir, 0.6).normalize();
   }
 
-  var proj;
-  if (w.type === 'beam') {
-    var beamGeo = new THREE.CylinderGeometry(0.08, 0.12, 0.6, 8);
-    var beamMat = new THREE.MeshStandardMaterial({
-      color: w.color, emissive: w.color, emissiveIntensity: 0.8, transparent: true, opacity: 0.9
-    });
-    proj = new THREE.Mesh(beamGeo, beamMat);
-    proj.rotation.z = Math.PI / 2;
-    var tip = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.25, 8), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 }));
-    tip.rotation.z = -Math.PI / 2; tip.position.x = 0.4; proj.add(tip);
-    var aura = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.18, 0.65, 8), new THREE.MeshBasicMaterial({ color: w.color, transparent: true, opacity: 0.15 }));
-    aura.rotation.z = Math.PI / 2; proj.add(aura);
-  } else if (w.type === 'orb') {
-    var orbMat = new THREE.MeshStandardMaterial({ color: w.color, emissive: w.color, emissiveIntensity: 0.7, transparent: true, opacity: 0.85 });
-    proj = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 12), orbMat);
-    var core = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 }));
-    proj.add(core);
-    var shellGeo = new THREE.TetrahedronGeometry(0.22);
-    var shell = new THREE.Mesh(shellGeo, new THREE.MeshBasicMaterial({ color: w.color, transparent: true, opacity: 0.25, wireframe: true }));
-    proj.add(shell);
-    proj.userData.shell = shell;
-    var ring = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.02, 8, 16), new THREE.MeshBasicMaterial({ color: w.color, transparent: true, opacity: 0.4 }));
-    ring.rotation.x = Math.PI / 2; proj.add(ring);
-    proj.userData.ring = ring;
-  } else {
-    var arrowMat = new THREE.MeshStandardMaterial({ color: w.color, emissive: w.color, emissiveIntensity: 0.6, transparent: true, opacity: 0.9 });
-    var arrowShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.5, 6), arrowMat);
-    arrowShaft.rotation.z = Math.PI / 2;
-    proj = new THREE.Group();
-    proj.add(arrowShaft);
-    var arrowHead = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.2, 6), arrowMat);
-    arrowHead.rotation.z = -Math.PI / 2; arrowHead.position.x = 0.35; proj.add(arrowHead);
-    var featherMat = new THREE.MeshBasicMaterial({ color: 0xaaccff, transparent: true, opacity: 0.6 });
-    [-0.2, -0.25].forEach(function (px) {
-      var feather = new THREE.Mesh(new THREE.PlaneGeometry(0.08, 0.12), featherMat);
-      feather.position.set(px, 0.05, 0); proj.add(feather);
-    });
-    var glow = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.52, 6), new THREE.MeshBasicMaterial({ color: w.color, transparent: true, opacity: 0.2 }));
-    glow.rotation.z = Math.PI / 2; proj.add(glow);
-  }
+  var proj = buildProjectileMesh(w);
 
   proj.position.copy(player.position);
   proj.position.y += 1.2;
@@ -389,6 +693,10 @@ function attack() {
   var angle = Math.atan2(dir.x, dir.z);
   proj.rotation.y = -angle;
 
+  // buildProjectileMesh 给能量球挂了 shell / ring 两个自转部件，
+  // 这里整体替换 userData 会把它们冲掉（更新循环里就拿不到、不会自转了），先存下来
+  var _pShell = proj.userData.shell;
+  var _pRing = proj.userData.ring;
   proj.userData = {
     vel: dir.clone().multiplyScalar(w.speed),
     life: 3,
@@ -396,48 +704,82 @@ function attack() {
     weapon: w,
     spinPhase: Math.random() * Math.PI * 2
   };
+  if (_pShell) proj.userData.shell = _pShell;
+  if (_pRing) proj.userData.ring = _pRing;
   scene.add(proj);
   projectiles.push(proj);
 
-  for (var i = 0; i < 3; i++) {
-    (function (delay) {
-      setTimeout(function () {
-        var ring = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.25, 16), new THREE.MeshBasicMaterial({ color: w.color, transparent: true, opacity: 0.6, side: THREE.DoubleSide }));
-        ring.position.copy(player.position);
-        ring.position.y += 1.2;
-        ring.lookAt(camera.position);
-        ring.userData = { expandSpeed: 2, life: 0.4 };
-        scene.add(ring);
-        projectiles.push(ring);
-      }, delay);
-    })(i * 50);
+  // 枪口特效：白闪 + 沿弹道扩散的光环 + 前冲火星
+  if (window.VX && VX.vfx) {
+    VX.vfx.muzzle(proj.position.clone(), dir.clone(), w.color);
+    VX.vfx.shake(0.016, 0.09);
   }
 
-  var flash = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 }));
-  flash.position.copy(player.position);
-  flash.position.y += 1.2;
-  flash.userData = { life: 0.15, shrink: true };
-  scene.add(flash);
-  projectiles.push(flash);
+  // 把这次开火广播给队友 —— 否则别人只看到血条在掉，看不到你在打
+  broadcastAttackFx({
+    kind: 'shot',
+    x: proj.position.x, y: proj.position.y, z: proj.position.z,
+    dx: dir.x, dz: dir.z,
+    color: w.color, speed: w.speed, wtype: w.type,
+    icon: w.icon
+  });
 
   showMessage(w.icon + ' 攻击!', w.color);
 }
 
 // ============================================================
-// 怪物对玩家的单次伤害
-// Boss: 最多3次击杀玩家；小怪: 最多5次击杀玩家（根据防御随机浮动）
+// 玩家对怪物的单次伤害守卫
+//
+// 旧实现用 perHitCap = hp / minHits 给每发伤害设上限，本意是防止秒杀 Boss，
+// 但它同时也把「攻击宝石 +10 / 等级 +攻击」全部吃掉了 —— 远程武器一发
+// 被压到 hp/10，加多少攻击力都打不出来。
+//
+// 现在只保留「防秒杀」这一条真正的下限：Boss 至少挨 8 下、小怪至少挨 3 下。
+// 正常伤害不再设上限，攻击加成会真实反映在击杀速度上。
+// ============================================================
+function playerDamageGuard(target, dmg) {
+  if (!target || !target.userData) return Math.max(1, Math.round(dmg));
+  var proto = (target.userData.type && target.userData.type.hp) || target.userData.maxHp || 100;
+  var combat = (typeof BALANCE !== 'undefined' && BALANCE.combat) ? BALANCE.combat : {};
+  var guard = target.userData.isBoss ? (combat.bossHitGuard || 8) : (combat.minionHitGuard || 3);
+  var cap = Math.max(1, Math.ceil(proto / guard));
+  return Math.max(1, Math.min(Math.round(dmg), cap));
+}
+
+// ============================================================
+// 怪物对玩家的单次伤害（绝对伤害模型）
+//
+// 旧实现是「最大生命 ÷ 固定次数」，有两个硬伤：
+//   1. 章节完全不影响受到多少伤害 —— 第 5 章和第 1 章掉血一样快
+//   2. 防御宝石的 +20 血量上限会同时抬高每次伤害，等于自己削自己
+//
+// 现在改成绝对伤害：数据表里的 dmg 是「第 1 章基准值」，再乘
+// 章节威胁系数与难度系数，最后减去防御减免（最多减 50%）。
+// 这样 +血量上限 能实打实多扛几下，防御也能实打实减伤。
 // ============================================================
 function monsterHitDamage(m) {
-  var maxHp = GS.maxHp + (GS.maxHpBonus || 0) + (GS.levelHpBonus || 0);
+  var t = (m && m.userData && (m.userData.type || m.userData)) || {};
+  var base = t.dmg || 10;
+
+  // 章节威胁 + 难度系数
+  var threat = (typeof BALANCE !== 'undefined') ? BALANCE.chapterThreat(GS.chapter) : 1;
+  // Boss 的章节增幅打折：Boss 基础伤害本来就高，再按满额乘上去，
+  // 第 5 章会出现"两下秒杀"，对小朋友过于劝退
+  if (m && m.userData && m.userData.isBoss) {
+    var bf = (typeof BALANCE !== 'undefined' && BALANCE.combat) ? (BALANCE.combat.bossThreatFactor || 0.55) : 0.55;
+    threat = 1 + (threat - 1) * bf;
+  }
+  var diff = (typeof balanceDiff === 'function') ? balanceDiff(GS.difficulty) : { damage: 1 };
+  var dmg = base * threat * (diff.damage || 1);
+
+  // 防御减免：按绝对值扣，最多减免 50%，保证再肉也还是会掉血
   var caps = getDynamicCaps();
   var totalDef = Math.min((GS.defBonus || 0) + (GS.levelDefBonus || 0), caps.defCap);
-  var defRatio = caps.defCap > 0 ? Math.min(1, totalDef / caps.defCap) : 0;
-  var isBoss = m && m.userData && m.userData.isBoss;
-  // 击杀所需次数：Boss 2~3次，小怪 4~5次（防御越高次数越多，附带随机浮动）
-  var hits = isBoss ? (2 + defRatio) : (4 + defRatio);
-  hits -= Math.random() * 0.35; // 随机浮动（只会让伤害略高，保证不超过上限次数）
-  hits = Math.max(1.5, hits);
-  return Math.ceil(maxHp / hits);
+  var maxReduce = (typeof BALANCE !== 'undefined' && BALANCE.combat)
+    ? (BALANCE.combat.maxDefenseReduction || 0.5) : 0.5;
+  var reduce = Math.min(totalDef, dmg * maxReduce);
+
+  return Math.max(1, Math.round(dmg - reduce));
 }
 
 // ============================================================
@@ -450,6 +792,10 @@ function useBindingRope(w) {
   dir.y = 0; dir.normalize();
 
   var allActive = monsters.concat(bosses);
+  // 追捕者也可被捆仙绳束缚
+  if (typeof chaserMonster !== 'undefined' && chaserMonster && chaserMonster.parent && chaserMonster.userData.active) {
+    allActive.push(chaserMonster);
+  }
   var target = null, bestDot = 0.2; // 只要求大致朝向即可（100%精准锁定）
   allActive.forEach(function (m) {
     if (!m.userData.active || m.userData.boundTimer > 0) return;
@@ -513,7 +859,9 @@ function useBindingRope(w) {
 // ============================================================
 function stickMeleeAttack(w) {
   var _caps = getDynamicCaps();
-  attackCooldown = Math.max(0.2, 0.6 - Math.min((GS.atkSpeedBonus || 0), _caps.atkSpeedCap));
+  var _pc = (typeof BALANCE !== 'undefined' && BALANCE.player) ? BALANCE.player : {};
+  attackCooldown = Math.max(_pc.minCooldown || 0.15,
+    (_pc.meleeCooldown || 0.55) - Math.min((GS.atkSpeedBonus || 0), _caps.atkSpeedCap));
   AudioMgr.playAttack();
 
   var dir = new THREE.Vector3(0, 0, -1);
@@ -521,56 +869,51 @@ function stickMeleeAttack(w) {
   dir.y = 0; dir.normalize();
 
   // === 挥棒动画：使用角色身上的木棍，大幅挥动 ===
-  // 确保木棍可见
+  // 注意：棍身旋转由 updatePlayerAnimation 驱动肩关节完成，
+  // 这里只做一次"放大脉冲"，不能改 rotation（旧实现用 setInterval 累加旋转，
+  // 挥完不会归零，木棍会永久歪掉）
   if (player && player.userData.stick) {
-    player.userData.stick.body.visible = true;
-    player.userData.stick.knot.visible = true;
-    player.userData.stick.glow.visible = true;
-    // 放大木棍动画效果
-    player.userData.stick.body.scale.set(1.8, 1.8, 1.8);
-    player.userData.stick.knot.scale.set(1.8, 1.8, 1.8);
-    player.userData.stick.glow.scale.set(1.8, 1.8, 1.8);
-    player.userData.stick.glow.material.opacity = 0.5;
+    var _stk = player.userData.stick;
+    _stk.body.visible = true;
+    _stk.knot.visible = true;
+    _stk.glow.visible = true;
+    _stk.body.scale.setScalar(1.55);
+    _stk.knot.scale.setScalar(1.55);
+    _stk.glow.scale.setScalar(1.55);
+    _stk.glow.material.opacity = 0.5;
+    setTimeout(function () {
+      if (!player || !player.userData.stick) return;
+      var s2 = player.userData.stick;
+      s2.body.scale.setScalar(1);
+      s2.knot.scale.setScalar(1);
+      s2.glow.scale.setScalar(1);
+      s2.glow.material.opacity = 0.15;
+    }, 180);
   }
-  // 额外挥棒光效
-  var swingTrail = new THREE.Mesh(
-    new THREE.TorusGeometry(0.7, 0.04, 6, 16),
-    new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.6, side: THREE.DoubleSide })
-  );
-  swingTrail.position.copy(player.position);
-  swingTrail.position.y += 0.9;
-  swingTrail.position.add(dir.clone().multiplyScalar(0.6));
-  swingTrail.rotation.y = Math.atan2(dir.x, dir.z);
-  swingTrail.rotation.x = Math.PI / 2;
-  scene.add(swingTrail);
-  // 快速挥动动画
-  var swingT = 0;
-  var swingInterval = setInterval(function () {
-    swingT += 0.12;
-    swingTrail.rotation.x = Math.PI / 2 + swingT * 6;
-    swingTrail.scale.x = 1 + swingT * 1.5;
-    swingTrail.material.opacity -= 0.08;
-    // 同时挥动角色身上的木棍
-    if (player && player.userData.stick) {
-      player.userData.stick.body.rotation.x += 0.15;
-      player.userData.stick.body.rotation.z += 0.1;
-    }
-    if (swingT >= 0.5) {
-      clearInterval(swingInterval);
-      scene.remove(swingTrail);
-      // 恢复木棍大小
-      if (player && player.userData.stick) {
-        player.userData.stick.body.scale.set(1, 1, 1);
-        player.userData.stick.knot.scale.set(1, 1, 1);
-        player.userData.stick.glow.scale.set(1, 1, 1);
-        player.userData.stick.glow.material.opacity = 0.15;
-      }
-    }
-  }, 16);
 
-  // === 命中判定：前方较大范围 ===
+  // 挥砍弧：贴着胸口高度扫出一道月牙 + 轻微震屏
+  if (window.VX && VX.vfx) {
+    VX.vfx.slash(
+      new THREE.Vector3(player.position.x, player.position.y + 0.92, player.position.z),
+      dir, 0xffe08a, { radius: 1.85, arc: 2.25, life: 0.26 }
+    );
+    VX.vfx.shake(0.03, 0.15);
+  }
+
+  // 把挥砍广播给队友（不带伤害，纯视觉）
+  broadcastAttackFx({
+    kind: 'slash',
+    x: player.position.x, y: player.position.y + 0.92, z: player.position.z,
+    dx: dir.x, dz: dir.z,
+    color: 0xffe08a
+  });
+
+  // === 命中判定：前方较大范围（含追捕者）===
   var MELEE_RANGE = 5.0;
   var allActive = monsters.concat(bosses);
+  if (typeof chaserMonster !== 'undefined' && chaserMonster && chaserMonster.parent && chaserMonster.userData.active) {
+    allActive.push(chaserMonster);
+  }
   var target = null, bestDot = 0.15;
   allActive.forEach(function (m) {
     if (!m.userData.active) return;
@@ -590,45 +933,41 @@ function stickMeleeAttack(w) {
     return;
   }
 
-  // 伤害计算：木棍敲打，小怪最多5下击杀，Boss最多10下击杀
+  // 伤害计算：木棍敲打
   var dmg = w.dmg + Math.min((GS.atkBonus || 0) + (GS.levelAtkBonus || 0), _caps.atkCap);
   if (GS.character === 'qike' && GS.skillActive > 0) dmg *= 1.5;
-  var minHits = target.userData.isBoss ? 10 : 5;
-  var perHitCap = Math.ceil((target.userData.type.hp || 100) / (minHits + Math.random() * 2));
-  var dealt = Math.max(1, Math.min(Math.round(dmg), perHitCap));
+  else if (GS.character === 'baba' && GS.skillActive > 0) dmg *= 1.3;
+  var dealt = playerDamageGuard(target, dmg);
 
-  target.userData.hp -= dealt;
+  var _isChaserTarget = (typeof chaserMonster !== 'undefined' && target === chaserMonster);
+  var _meleeKilled = dealMonsterDamage(target, dealt, _isChaserTarget);
   target.userData.lastAttackedTime = clock.elapsedTime;
+  target.userData.hitFlash = 0.25;
+  // 木棍命中：小怪明显击退+硬直，近战风险的回报
+  target.userData.staggerTimer = Math.max(target.userData.staggerTimer || 0, target.userData.isBoss ? 0.15 : 0.35);
+  if (!target.userData.isBoss) {
+    var kbDir = new THREE.Vector3().subVectors(target.position, player.position);
+    kbDir.y = 0;
+    if (kbDir.lengthSq() > 0.0001) {
+      target.position.add(kbDir.normalize().multiplyScalar(1.2));
+    }
+  }
   monsterHitFlash = 0.2;
   AudioMgr.playHit();
   showMessage('🪵 敲打! -' + dealt, 0xccaa66);
 
-  // 命中特效：木屑飞溅 + 冲击星
+  // 命中特效：白热爆点 + 爪击状冲击线 + 木屑（带重力）
   var hitPos = target.position.clone();
   hitPos.y += 1.0 * ((target.userData.type && target.userData.type.scale) || 1);
-  for (var i = 0; i < 8; i++) {
-    var chip = new THREE.Mesh(
-      new THREE.BoxGeometry(0.05, 0.05, 0.05),
-      new THREE.MeshBasicMaterial({ color: i % 2 === 0 ? 0x9a6b3f : 0xffdd88, transparent: true, opacity: 1 })
-    );
-    chip.position.copy(hitPos);
-    var a = Math.random() * Math.PI * 2;
-    chip.userData = {
-      vel: new THREE.Vector3(Math.cos(a) * (1.5 + Math.random() * 2), 1.5 + Math.random() * 2, Math.sin(a) * (1.5 + Math.random() * 2)),
-      life: 0.5, fade: true
-    };
-    scene.add(chip);
-    projectiles.push(chip);
+  if (window.VX && VX.vfx) {
+    var _hs = (target.userData.type && target.userData.type.scale) || 1;
+    VX.vfx.impact(hitPos, 0xffd166, {
+      scale: 1.0 * Math.min(1.3, _hs),
+      chipColor: 0x9a6b3f,
+      chipCount: 9
+    });
+    VX.vfx.slashLines(hitPos, dir, 0xffe9a8, { count: 3, length: 1.35, spread: 0.26 });
   }
-  var star = new THREE.Mesh(
-    new THREE.RingGeometry(0.15, 0.25, 5),
-    new THREE.MeshBasicMaterial({ color: 0xffdd44, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
-  );
-  star.position.copy(hitPos);
-  star.lookAt(camera.position);
-  star.userData = { expandSpeed: 5, life: 0.3, fade: true };
-  scene.add(star);
-  projectiles.push(star);
 
   // Boss阶段变化（与子弹命中一致）
   if (target.userData.isBoss && target.userData.hp > 0) {
@@ -645,7 +984,7 @@ function stickMeleeAttack(w) {
     }
   }
 
-  if (target.userData.hp <= 0) {
+  if (_meleeKilled) {
     onMonsterDefeated(target);
   }
   updateHUD();
@@ -653,8 +992,10 @@ function stickMeleeAttack(w) {
 
 function monsterAttack(m) {
   if (GS.gameOver || !GS.running) return;
+  if (GS.downed) return;   // 倒地待救时怪物不再追打，避免血量被反复压到 0
   if (!m || !m.userData || !m.userData.active) return;
   if (m.userData.boundTimer > 0) return; // 被捆仙绳束缚，无法攻击
+  if (m.userData.staggerTimer > 0) return; // 受击硬直中，无法攻击
   if (m.userData.sleeping) return; // Boss睡眠中不会主动攻击
   // 每只怪物独立攻击冷却（不再共用全局冷却）
   if (m.userData.attackCooldown > 0) return;
@@ -664,12 +1005,14 @@ function monsterAttack(m) {
   var dir = new THREE.Vector3().subVectors(player.position, m.position);
   var dist = dir.length();
   if (dist < 3.5 * (t.scale || 1)) {
-    // 伤害按"击杀所需次数"计算（Boss最多3次，小怪最多5次，防御已计入）
+    // 伤害按"击杀所需次数"计算（Boss最少3次，小怪最少5次，防御已计入）
     var dmg = monsterHitDamage(m);
     if (GS._shielded) {
       dmg = Math.ceil(dmg * 0.1);
       showMessage('🛡️ 护盾格挡!', 0x9944ff);
     }
+    // 复活后的短暂无敌：不倒翁期挨打不掉血
+    if (GS._invulnTimer > 0) dmg = 0;
     GS.hp -= dmg;
     updateHUD();
     hitFlash = 0.3;
@@ -679,6 +1022,22 @@ function monsterAttack(m) {
 
     // === 攻击特效 ===
     createMonsterAttackEffect(m);
+
+    // 联机：把这次挥爪广播给房间里的其他端。
+    // 怪物 AI 只跑在主机上，爪击光带是纯本地特效 —— 不广播的话，
+    // 其他人只会看到怪物在原地"隔空咬人"，一点打击反馈都没有。
+    // 加入者本地也会调用 monsterAttack（它自己挨打时），所以这里不再限定 isHost。
+    if (GS.mode === 'multiplayer' && typeof PeerManager !== 'undefined' && PeerManager.connected) {
+      PeerManager.broadcast('monster_attack_fx', {
+        netId: m.userData.netId || null,
+        x: m.position.x,
+        z: m.position.z,
+        tx: player.position.x,
+        tz: player.position.z,
+        color: t.emissive || 0xff3322,
+        scale: t.scale || 1
+      });
+    }
 
     // === 击退：将角色沿怪物→角色方向弹开一小段距离 ===
     var knockDir = dir.clone();
@@ -692,65 +1051,55 @@ function monsterAttack(m) {
     GS.canJump = false;
 
     clampPlayer();
-    if (GS.hp <= 0) { GS.hp = 0; GS.gameOver = true; GS.running = false; showGameOver() }
+    if (GS.hp <= 0) handlePlayerDeath('hp');
   }
 }
 
-// 怪物攻击特效：爪击斩线 + 冲击环 + 飞溅粒子
+// 怪物攻击特效：爪击光带 + 受击爆点 + 震屏
 function createMonsterAttackEffect(m) {
+  if (!window.VX || !VX.vfx) return;
   var t = m.userData.type || {};
   var effColor = t.emissive || 0xff3322;
+  var scale = t.scale || 1;
+
+  // 怪物 → 角色 的水平方向
+  var dir = new THREE.Vector3().subVectors(player.position, m.position);
+  dir.y = 0;
+  if (dir.lengthSq() < 0.0001) dir.set(0, 0, 1);
+  dir.normalize();
+
   var mid = new THREE.Vector3().addVectors(m.position, player.position).multiplyScalar(0.5);
   mid.y += 1.0;
 
-  // 爪击斩线（3道）
-  for (var ci = 0; ci < 3; ci++) {
-    var slash = new THREE.Mesh(
-      new THREE.BoxGeometry(0.06, 1.2, 0.06),
-      new THREE.MeshBasicMaterial({ color: effColor, transparent: true, opacity: 0.9 })
-    );
-    slash.position.copy(mid);
-    slash.position.x += (ci - 1) * 0.25;
-    slash.rotation.z = -0.6 + ci * 0.15;
-    slash.rotation.y = Math.random() * 0.5;
-    slash.userData = { life: 0.3, fade: true };
-    scene.add(slash);
-    projectiles.push(slash);
-  }
+  // 爪击：从怪物甩向角色的三道斜向光带
+  VX.vfx.slashLines(mid, dir, effColor, {
+    count: 3,
+    length: 1.7 * scale,
+    spread: 0.34 * scale
+  });
 
-  // 冲击环
-  var ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.2, 0.32, 20),
-    new THREE.MeshBasicMaterial({ color: effColor, transparent: true, opacity: 0.8, side: THREE.DoubleSide })
-  );
-  ring.position.copy(player.position);
-  ring.position.y += 0.9;
-  ring.lookAt(camera.position);
-  ring.userData = { expandSpeed: 6, life: 0.35, fade: true };
-  scene.add(ring);
-  projectiles.push(ring);
+  // 角色身上的受击爆点（不要地面冲击波，避免和击退动作打架）
+  var hitPos = player.position.clone();
+  hitPos.y += 0.85;
+  VX.vfx.impact(hitPos, effColor, {
+    scale: 0.95,
+    groundRing: false,
+    streakCount: 7,
+    chipColor: effColor,
+    chipCount: 6
+  });
 
-  // 飞溅粒子
-  for (var pi = 0; pi < 10; pi++) {
-    var sp = new THREE.Mesh(
-      new THREE.SphereGeometry(0.05 + Math.random() * 0.04, 4, 4),
-      new THREE.MeshBasicMaterial({ color: pi % 2 === 0 ? effColor : 0xffddaa, transparent: true, opacity: 1 })
-    );
-    sp.position.copy(mid);
-    var pAngle = Math.random() * Math.PI * 2;
-    var pSpeed = 2 + Math.random() * 2.5;
-    sp.userData = {
-      vel: new THREE.Vector3(Math.cos(pAngle) * pSpeed, 1 + Math.random() * 2, Math.sin(pAngle) * pSpeed),
-      life: 0.5,
-      fade: true
-    };
-    scene.add(sp);
-    projectiles.push(sp);
-  }
+  // Boss 打人更重
+  VX.vfx.shake(m.userData.isBoss ? 0.11 : 0.075, 0.26);
 }
 
 function showGameOver() {
   var failed = GS.hp <= 0;
+  // 主机要告诉服务器"这局打完了"，解除房间"对局中"标记，
+  // 否则本局结束后想加入房间的新玩家会被一直拒之门外。
+  if (GS.mode === 'multiplayer' && GS.isHost && typeof PeerManager !== 'undefined' && PeerManager.connected) {
+    try { PeerManager._send({ type: 'end_game' }); } catch (e) { }
+  }
   document.getElementById('result-title').textContent = failed ? '💔 闯关失败...' : '🎉 通关成功!';
   document.getElementById('final-answers').textContent = '✅ 答对题目: ' + GS.correct + '/' + GS.total;
   document.getElementById('final-weapons').textContent = '⚔️ 获得武器: ' + GS.weaponCount + '/3';
@@ -766,6 +1115,11 @@ function gameWin() {
   showMessage('🏆 通关成功!', 0xffd700);
   GS.gameOver = true;
   GS.running = false;
+
+  // 主机：通知服务器本局结束（见 showGameOver 注释）
+  if (GS.mode === 'multiplayer' && GS.isHost && typeof PeerManager !== 'undefined' && PeerManager.connected) {
+    try { PeerManager._send({ type: 'end_game' }); } catch (e) { }
+  }
 
   GS.totalStars += GS.stars;
 

@@ -1,8 +1,264 @@
 // ============================================================
 // 更新循环
 // ============================================================
+var _gameOverBroadcasted = false; // 防止重复广播
+
+// 加入者本地怪物攻击检测（在 sendInput 前执行，确保发送最新 HP）
+function joinerLocalMonsterAttack(delta) {
+  if (typeof monsters === 'undefined' || !player) return;
+  // 倒地待救 / 复活无敌期间不再结算怪物伤害。
+  // 原来倒地后还会继续挨打，而扣血用的是 `(GS.hp || 100)` ——
+  // hp=0 会被当成 100，倒在地上反而"满血复活"，血条来回跳。
+  if (GS.downed) return;
+  if (GS._invulnTimer > 0) return;
+  // 检测小怪
+  for (var li = 0; li < monsters.length; li++) {
+    var lm = monsters[li];
+    if (!lm || !lm.userData || !lm.userData.active) continue;
+    // 只结算"房主世界里真实存在"的怪物（快照创建的怪都带 netId）。
+    // 没有 netId 的只可能是本地某条代码路径漏创建的幽灵怪——
+    // 房主那边根本看不到它，让它咬人就是"我被打了但队友什么都看不见"。
+    if (!lm.userData.netId) continue;
+    if (lm.userData.boundTimer > 0 || lm.userData.staggerTimer > 0) continue;
+    if (lm.userData.attackCooldown === undefined) lm.userData.attackCooldown = 0;
+    lm.userData.attackCooldown -= delta;
+    if (lm.userData.attackCooldown > 0) continue;
+    var lDist = player.position.distanceTo(lm.position);
+    var lRange = (!lm.userData.isBoss && lm.userData.type && lm.userData.type.ranged) ? 8 : 3.5;
+    if (lDist < lRange * ((lm.userData.type && lm.userData.type.scale) || 1)) {
+      // 命中后直接复用 monsterAttack() 的完整流程：
+      // 攻击特效、受击动画、音效、伤害提示、击退、无敌/护盾判定、死亡判定全在里面。
+      // 原来这里只做 `GS.hp -= dmg`，加入者被怪物打时没有任何反馈 ——
+      // 没有爪击光带、没有"被击中"提示、没有击退，看起来像"怪物在空气里挥爪"。
+      if (typeof monsterAttack === 'function') {
+        monsterAttack(lm);
+      } else {
+        lm.userData.attackCooldown = 1.5;
+        var lDmg = (typeof monsterHitDamage === 'function') ? monsterHitDamage(lm) : 10;
+        GS.hp = Math.max(0, currentPlayerHp() - lDmg);
+        hitFlash = 0.3; updateHUD();
+        if (GS.hp <= 0) handlePlayerDeath('hp');
+      }
+      return;
+    }
+  }
+  // 检测Boss
+  if (typeof bosses !== 'undefined') {
+    for (var bi = 0; bi < bosses.length; bi++) {
+      var lb = bosses[bi];
+      if (!lb || !lb.userData || !lb.userData.active) continue;
+      if (!lb.userData.netId) continue;   // 同小怪：无 netId 的本地幽灵怪不结算
+      if (lb.userData.boundTimer > 0 || lb.userData.staggerTimer > 0) continue;
+      if (lb.userData.attackCooldown === undefined) lb.userData.attackCooldown = 0;
+      lb.userData.attackCooldown -= delta;
+      if (lb.userData.attackCooldown > 0) continue;
+      if (player.position.distanceTo(lb.position) < 3.5 * ((lb.userData.type && lb.userData.type.scale) || 1)) {
+        if (typeof monsterAttack === 'function') {
+          monsterAttack(lb);
+        } else {
+          lb.userData.attackCooldown = 1.5;
+          var bDmg = (typeof monsterHitDamage === 'function') ? monsterHitDamage(lb) : 10;
+          GS.hp = Math.max(0, currentPlayerHp() - bDmg);
+          hitFlash = 0.3; updateHUD();
+          if (GS.hp <= 0) handlePlayerDeath('hp');
+        }
+        return;
+      }
+    }
+  }
+  // 检测抓捕者
+  if (typeof chaserMonster !== 'undefined' && chaserMonster && chaserMonster.parent && chaserMonster.userData && chaserMonster.userData.active) {
+    if (chaserMonster.userData.attackCooldown === undefined) chaserMonster.userData.attackCooldown = 0;
+    chaserMonster.userData.attackCooldown -= delta;
+    if (chaserMonster.userData.attackCooldown <= 0 && player.position.distanceTo(chaserMonster.position) < 2.5) {
+      chaserMonster.userData.attackCooldown = 3.0;
+      GS.hp = Math.max(0, currentPlayerHp() - 15);
+      hitFlash = 0.3; updateHUD();
+      if (typeof AudioMgr !== 'undefined' && AudioMgr.playHurt) AudioMgr.playHurt();
+      if (typeof showMessage === 'function') showMessage('💥 被追捕者击中! -15❤️', 0xff4444);
+      if (GS.hp <= 0) handlePlayerDeath('hp');
+    }
+  }
+}
+
+// ============================================================
+// 宝箱开启：靠近 + 停留一段时间才开箱
+//
+// 旧逻辑是「进入半径立刻弹答题」，问题有两个：
+//   1. 玩家跑过墙角（5 个普通宝箱都刷在墙角）时会被强制弹题，
+//      而弹题会把 GS.running 设为 false 直接冻住游戏，节奏被打断得很生硬；
+//   2. 玩家没有任何"我正在开箱"的预期。
+// 现在改成停留读条：进圈开始积攒进度，出圈回退，攒满才开箱。
+// 跑过去根本来不及攒满，停下来才开——不需要额外按键，触屏也通用。
+// ============================================================
+var CHEST_HOLD_TIME = { gold: 0.85, normal: 1.0 };  // 读条时长（秒）
+var CHEST_HOLD_RANGE = { gold: 2.4, normal: 2.0 };  // 触发半径（米）
+
+// 加入者上报开箱后，本地先冷却这么久再重试。
+// 不设冷却的话，主机迟迟不回执时本地会每帧重发一条 chest_interact（60Hz），
+// 进度条刚满就归零、立刻又满 —— 玩家看到的就是"一直在重复开启宝箱"。
+var CHEST_INTERACT_COOLDOWN = 1.2;
+
+var _chestUI = null, _chestUIMissing = false;
+function chestProgressUI() {
+  if (_chestUI) return _chestUI;
+  if (_chestUIMissing) return null;   // 查不到就记住，避免每帧 querySelector
+  var root = document.getElementById('chest-progress');
+  if (!root) { _chestUIMissing = true; return null; }
+  _chestUI = {
+    root: root,
+    icon: root.querySelector('.cp-icon'),
+    label: root.querySelector('.cp-label'),
+    fill: root.querySelector('.cp-fill')
+  };
+  return _chestUI;
+}
+
+function hideChestProgress() {
+  var ui = chestProgressUI();
+  if (ui && !ui.root.classList.contains('hidden')) ui.root.classList.add('hidden');
+}
+
+// 推进某个宝箱的开箱进度，返回是否已攒满
+function tickChestHold(chest, delta, isGolden) {
+  var key = isGolden ? 'gold' : 'normal';
+  var need = CHEST_HOLD_TIME[key];
+  var range = CHEST_HOLD_RANGE[key];
+
+  // 只用水平距离。
+  // 宝箱本身在做上下浮动（position.y 在 0.75~0.95 之间），玩家 y≈0，
+  // 用 position.distanceTo() 会把这段高度算进去：站在 1.9 米处，
+  // 实测距离已经是 2.08 米 —— 超过 2.0 的判定半径，进度条就永远不动。
+  // 联机时加入者只能靠这段本地读条上报（主机侧阈值更小），
+  // 所以这里必须按"地面距离"算，才和玩家看到的贴身程度一致。
+  var _hdx = player.position.x - chest.position.x;
+  var _hdz = player.position.z - chest.position.z;
+  var dist = Math.sqrt(_hdx * _hdx + _hdz * _hdz);
+  var prog = chest.userData.openProgress || 0;
+
+  if (dist < range) {
+    prog += delta / need;
+  } else {
+    // 离开后回退得比积攒快一些，避免"蹭一下就跑"也能开
+    prog -= delta / (need * 0.55);
+  }
+  prog = Math.max(0, Math.min(1, prog));
+  chest.userData.openProgress = prog;
+
+  if (dist < range && prog > 0.02) {
+    var ui = chestProgressUI();
+    if (ui) {
+      ui.root.classList.remove('hidden', 'cooling');
+      if (isGolden) ui.root.classList.add('golden');
+      else ui.root.classList.remove('golden');
+      ui.icon.textContent = isGolden ? '🎁' : '📦';
+      ui.label.textContent = isGolden ? '正在开启金色宝箱…' : '正在开启宝箱…';
+      ui.fill.style.width = (prog * 100).toFixed(0) + '%';
+    }
+  }
+
+  return prog >= 1;
+}
+
 function update(delta) {
+  // 联机模式：如果游戏结束，广播一次 game_over 并退出
+  if (GS.mode === 'multiplayer' && GS.isHost && GS.gameOver && !_gameOverBroadcasted && typeof PeerManager !== 'undefined') {
+    _gameOverBroadcasted = true;
+    // 区分失败（HP=0）和通关（逃跑成功）
+    var resultType = (GS.hp <= 0) ? 'defeat' : 'escape';
+    PeerManager.broadcast('game_over', {
+      winner: resultType,
+      stats: { correct: GS.correct, total: GS.total, stars: GS.stars, energy: GS.energy }
+    });
+  }
+
+  // 安全网：整局被"暂停"卡住时自动恢复。
+  //
+  // GS.running 只有三处会置 false：答题、逃生动画、结算。逃生/结算各有自己的
+  // 状态位（escaping / gameOver），所以「running=false 且这两个都不成立、
+  // 答题框也不可见」只可能是异常残留 —— 一旦发生，人物不动、怪物不打人、
+  // 宝箱也开不了，表现就是"联机里什么都点不动"。这里兜住它。
+  if (!GS.running && !GS.gameOver && !GS.escaping && !(GS.countdown > 0)) {
+    var _qo = document.getElementById('quiz-overlay');
+    if (!_qo || _qo.style.display !== 'flex') {
+      GS.running = true;
+      console.warn('[update] GS.running 异常为 false，已自动恢复');
+    }
+  }
+
+  // 联机主机：即使本机被答题 / 结算暂停，也必须继续发世界快照。
+  //
+  // 原来发送逻辑在全函数下面那个 `if (!GS.running || GS.gameOver) return;` 之后，
+  // 主机一开答题（GS.running 被置 false）整条快照流就断了：
+  // 加入者那边怪物瞬间定格、宝箱没反应、队友停在原地 —— 看起来就是
+  // "联机版整个世界卡死了"。快照只是把当前状态原样发出去，
+  // 暂停期间继续发没有任何副作用，反而能让队友看到"房主正在答题"的静止画面
+  // 而不是以为掉线了。
+  if (GS.mode === 'multiplayer' && GS.isHost && (!GS.running || GS.gameOver)) {
+    try {
+      // 主机自己在答题时，只把「怪物」这一层继续跑完。
+      //
+      // 房主答题会把 GS.running 置 false（单机时整局暂停是合理的），
+      // 但联机时这一暂停会把队友的怪区也冻住：怪物定格、不再追人。
+      // monsterAttack 开头本来就有 `!GS.running` 判断，所以这里跑 AI
+      // 不会让答题中的房主掉血，只是让怪物继续走动、继续扑向队友。
+      if (!GS.gameOver && typeof updateMonster === 'function') {
+        updateMonster(delta);
+        if (typeof applyEntityCollisions === 'function') applyEntityCollisions();
+      }
+
+      SyncManager.snapshotTimer += delta * 1000;
+      if (SyncManager.snapshotTimer >= SyncManager.snapshotInterval) {
+        SyncManager.snapshotTimer = 0;
+        SyncManager.sendSnapshot();
+      }
+    } catch (e) {
+      if (window.__syncErrCount === undefined) window.__syncErrCount = 0;
+      window.__syncErrCount++;
+      if (window.__syncErrCount <= 3) {
+        console.error('[Multiplayer] 暂停期间发送快照出错:', e && e.message);
+      }
+    }
+  }
+
   if (!GS.running || GS.gameOver) return;
+
+  // 加入者本地怪物攻击检测（在 sendInput 之前执行，确保发送最新 HP）
+  if (GS.mode === 'multiplayer' && !GS.isHost && typeof monsters !== 'undefined' && player) {
+    joinerLocalMonsterAttack(delta);
+  }
+
+  // ===== 联机模式同步 =====
+  if (GS.mode === 'multiplayer') {
+    try {
+      if (GS.isHost) {
+        // 处理加入者的移动输入
+        processJoinerInputs(delta);
+
+        // 主机：每50ms发送世界状态快照
+        SyncManager.snapshotTimer += delta * 1000;
+        if (SyncManager.snapshotTimer >= SyncManager.snapshotInterval) {
+          SyncManager.snapshotTimer = 0;
+          SyncManager.sendSnapshot();
+        }
+      } else {
+        // 加入者：发送玩家输入到主机
+        SyncManager.sendInput();
+      }
+      // 更新远程玩家位置（插值）
+      SyncManager.updateRemotePlayers(delta);
+    } catch (e) {
+      // 这里原来只有一句 console.warn，任何同步异常都会被完全静默吞掉，
+      // 表现出来就是"某个功能莫名其妙没反应"而且毫无线索。
+      // 改成 console.error + 打印堆栈，并限制重复输出。
+      window.__syncErrCount = (window.__syncErrCount || 0) + 1;
+      if (window.__syncErrCount <= 3) {
+        console.error('[Multiplayer] 同步出错，跳过本帧:', e && e.message, '\n', e && e.stack);
+      } else if (window.__syncErrCount === 4) {
+        console.error('[Multiplayer] 同步持续出错，后续不再重复打印堆栈');
+      }
+    }
+  }
 
   // （已移除中央房间额外刷怪：全场只保持1只Boss+1只小怪）
 
@@ -13,11 +269,13 @@ function update(delta) {
   updateJump(delta);
   updateSkillTimers(delta);
 
-  // 如果被抓住，不能移动
+  // 被抓住时完全不能移动（moveDir 保持零向量，视角仍可转动）。
+  // 倒地待救则可以**爬行**：速度压到 25%，能挪到掩体后或爬向队友，
+  // 否则倒在地上只能干等，体验太被动。
+  var moveDir = new THREE.Vector3();
   if (captureState && captureState.captured) {
     // 移动键无效
   } else {
-    var moveDir = new THREE.Vector3();
     if (keys['w'] || keys['arrowup']) moveDir.z -= 1;
     if (keys['s'] || keys['arrowdown']) moveDir.z += 1;
     if (keys['a'] || keys['arrowleft']) moveDir.x -= 1;
@@ -39,7 +297,14 @@ function update(delta) {
       if (moveVec.length() > 0) {
         var _caps = getDynamicCaps();
         var baseSpeedBonus = Math.min((GS.moveSpeedBonus || 0) + (GS.levelSpeedBonus || 0), _caps.speedCap);
-        moveVec.normalize().multiplyScalar((moveSpeed + baseSpeedBonus) * delta);
+        var spd = moveSpeed + baseSpeedBonus;
+        // moveSpeed 会被技能临时改写（疾风冲刺），加成上限已由 speedCap 拦住
+        // 挣脱后短暂加速逃跑
+        if (captureState && captureState.escapeBoostTimer > 0) spd *= 1.5;
+        // 倒地爬行：只保留四分之一速度，且不吃任何加速加成（爬不快）
+        if (GS.downed) spd = (typeof BALANCE !== 'undefined' && BALANCE.player && BALANCE.player.baseSpeed
+          ? BALANCE.player.baseSpeed : 5) * 0.25;
+        moveVec.normalize().multiplyScalar(spd * delta);
         player.position.add(moveVec);
         clampPlayer();
         player.rotation.y = Math.atan2(moveVec.x, moveVec.z);
@@ -47,11 +312,17 @@ function update(delta) {
     }
   }
 
-  var smoothFactor = IS_TOUCH ? 15 : 6;
-  mouse.x += (targetMouse.x - mouse.x) * delta * smoothFactor;
-  mouse.y += (targetMouse.y - mouse.y) * delta * smoothFactor;
+  // 帧率无关的指数平滑：桌面端更跟手，触屏稍缓
+  var smoothK = 1 - Math.exp(-(IS_TOUCH ? 18 : 14) * delta);
+  mouse.x += (targetMouse.x - mouse.x) * smoothK;
+  mouse.y += (targetMouse.y - mouse.y) * smoothK;
 
-  var camOffset = new THREE.Vector3(0, 3, 6);
+  var camOffset = (window.CAM_OFFSET || new THREE.Vector3(0, 3.45, 6.2)).clone();
+  // 倒地观战：把镜头抬高拉远一点，能看见队友在干什么（否则贴地视角什么都看不到）
+  if (GS.downed) {
+    camOffset.y += 3.4;
+    camOffset.z += 3.2;
+  }
   var euler = new THREE.Euler(0, 0, 0, 'YXZ');
   var quat = new THREE.Quaternion().setFromEuler(euler);
   var rotOffset = camOffset.clone().applyQuaternion(quat);
@@ -59,10 +330,24 @@ function update(delta) {
   rotOffset.applyQuaternion(yQuat);
 
   var targetPos = player.position.clone().add(rotOffset);
-  camera.position.lerp(targetPos, 0.1);
-  camera.lookAt(player.position.x, player.position.y + 1.2, player.position.z);
+  // 相机跟随也做帧率无关平滑（被拖拽时加快跟随，避免玩家被拖出画面）
+  var camK = 1 - Math.exp(-((captureState && captureState.captured) ? 10 : 6) * delta);
+  camera.position.lerp(targetPos, camK);
+  // 命中震屏：偏移在 lookAt 之前叠加，视觉上是画面抖动而不是视线漂移
+  if (window.VX && VX.vfx) {
+    VX.vfx.tick(delta);
+    camera.position.add(VX.vfx.offset);
+  }
+  camera.lookAt(player.position.x, player.position.y + 1.05, player.position.z);
 
-  updateMonster(delta);
+  // 联机加入者模式：跳过怪物AI和道具拾取，使用插值
+  if (GS.mode === 'multiplayer' && !GS.isHost) {
+    if (typeof SyncManager.updateSyncedMonsters === 'function') {
+      SyncManager.updateSyncedMonsters(delta);
+    }
+  } else {
+    updateMonster(delta);
+  }
   updateItems(delta);
 
   // 更新角色动画
@@ -72,22 +357,93 @@ function update(delta) {
   // 更新手电筒
   updateFlashlight(delta);
 
+  // 夜晚可见度：队友名字标签按距离显隐（模型本身靠雾自然淡出，不用管）
+  if (typeof updateNightVisibility === 'function') updateNightVisibility();
+
+  // 联机倒地/救援：累计救援进度、判定全员倒地
+  if (typeof updateReviveSystem === 'function') updateReviveSystem(delta);
+  if (typeof checkAllDown === 'function') checkAllDown();
+
   // 更新怪物血条（实时显示）
   updateMonsterHPBar();
 
   // 更新抓捕者系统
   updateCaptureSystem(delta);
 
+  // 一帧内所有位移来源处理完之后，统一收口做墙体碰撞
+  applyEntityCollisions();
+
+  // 金色宝箱和普通宝箱更新（加入者只更新动画，不触发答题）
+  hideChestProgress();   // 每帧先隐藏，范围内有宝箱时下面会重新显示
+
   if (energyOrb && energyOrb.userData.active) {
     // 金色宝箱：轻微浮动 + 光晕脉动
     energyOrb.position.y = groundY + Math.sin(clock.elapsedTime * 2 + energyOrb.userData.floatPhase) * 0.06;
     if (energyOrb.userData.glow) {
-      energyOrb.userData.glow.material.opacity = 0.08 + Math.sin(clock.elapsedTime * 3) * 0.05;
+      // 答错冷却期间光晕压暗，给玩家"现在开不了"的视觉反馈
+      var _cdFactor = energyOrb.userData.cooldown > 0 ? 0.2 : 1;
+      energyOrb.userData.glow.material.opacity = (0.08 + Math.sin(clock.elapsedTime * 3) * 0.05) * _cdFactor;
     }
+    // 冷却提示：主机和加入者都显示
     if (energyOrb.userData.cooldown > 0) {
       energyOrb.userData.cooldown -= delta;
-    } else if (player.position.distanceTo(energyOrb.position) < 2) {
-      showQuiz();
+      energyOrb.userData.openProgress = 0;
+      // 靠近时提示还要等多久，否则玩家只会觉得"这个宝箱点了没反应"
+      if (player.position.distanceTo(energyOrb.position) < CHEST_HOLD_RANGE.gold) {
+        var _cui = chestProgressUI();
+        if (_cui) {
+          _cui.root.classList.remove('hidden');
+          _cui.root.classList.add('golden', 'cooling');
+          _cui.icon.textContent = '⏳';
+          _cui.label.textContent = '宝箱冷却中 ' + Math.max(1, Math.ceil(energyOrb.userData.cooldown)) + ' 秒';
+          _cui.fill.style.width = '100%';
+        }
+      }
+    } else if (tickChestHold(energyOrb, delta, true)) {
+      energyOrb.userData.openProgress = 0;
+      if (GS.mode === 'multiplayer' && !GS.isHost) {
+        // 加入者：本地读条攒满后上报，由主机触发远程答题。
+        //
+        // 原来加入者完全不跑这段，开箱全靠主机拿「上报位置」做距离判定
+        // （阈值只有 2 米）。位置上报有延迟、还会被快照纠正，
+        // 加入者明明站在宝箱上，主机却认为距离不够 —— 这就是"加入者开不了宝箱"。
+        // 改成本地读条后，判定用的是加入者自己的精确坐标，且有进度条反馈。
+        energyOrb.userData.cooldown = CHEST_INTERACT_COOLDOWN;
+        PeerManager.broadcast('chest_interact', { netId: 'gold', isGold: true });
+      } else {
+        showQuiz();
+      }
+    }
+  }
+  // 普通宝箱更新：动画两端都跑，读条两端都跑，但"开箱动作"按角色分流
+  for (var ni = 0; ni < normalChests.length; ni++) {
+    var nc = normalChests[ni];
+    if (!nc.userData.active) continue;
+    nc.position.y = 0.85 + Math.sin(clock.elapsedTime * 2 + nc.userData.floatPhase) * 0.1;
+    nc.rotation.y += delta * nc.userData.rotSpeed;
+
+    if (nc.userData.cooldown > 0) {
+      nc.userData.cooldown -= delta;
+      nc.userData.openProgress = 0;
+      continue;
+    }
+    if (tickChestHold(nc, delta, false)) {
+      nc.userData.openProgress = 0;
+      if (GS.mode === 'multiplayer' && !GS.isHost) {
+        // 加入者：本地读条攒满后上报，由主机裁决并触发远程答题。
+        // 与金色宝箱同理 —— 不依赖主机的位置检测，判定用本地精确坐标。
+        // 上报后本地先冷却一小段：主机回执（答题 / chest_reject）需要时间，
+        // 不冷却的话这段时间里进度条会一直"满 → 归零 → 又满"地空转。
+        nc.userData.cooldown = CHEST_INTERACT_COOLDOWN;
+        PeerManager.broadcast('chest_interact', {
+          netId: nc.userData.netId || null,
+          isGold: false
+        });
+      } else {
+        // 这里不能先置 active=false：showQuiz 开头会用 !active 判断"已答过"直接 return，
+        // 原来先置 false 会导致普通宝箱永远弹不出题。防重复交给 showQuiz 内部处理。
+        showQuiz(nc);
+      }
     }
   }
   if (ship) {
@@ -98,6 +454,13 @@ function update(delta) {
       ship.userData.ring.material.opacity = shipFull ? 0.5 + Math.sin(clock.elapsedTime * 6) * 0.25 : 0.3;
     }
     if ((GS.energy || 0) >= (GS.energyMax || 5) && !GS.escaping && player.position.distanceTo(ship.position) < 3) {
+      // 联机模式：逃生是**全队事件**，谁先跑到飞船谁就把大家带走。
+      // 原来这里只允许主机广播，加入者走到飞船只会在自己屏幕上独自起飞，
+      // 主机那边毫无反应 —— 这正是"参与者逃生了、创建者还无法逃生"的另一半原因。
+      // 现在任何一端都可以发起；主机收到后还会再用自己的能量值校验一次（见 game_event）。
+      if (GS.mode === 'multiplayer' && typeof PeerManager !== 'undefined' && PeerManager.connected) {
+        PeerManager.broadcast('game_event', { event: 'escape' });
+      }
       startEscape();
     }
   }
@@ -123,11 +486,26 @@ function update(delta) {
     var p = projectiles[i];
     if (!p.parent) { projectiles.splice(i, 1); continue; }
 
+    // 重力：碎屑/火星抛物线下落
+    if (p.userData.gravity && p.userData.vel) {
+      p.userData.vel.y -= p.userData.gravity * delta;
+    }
+
     if (p.userData.vel) {
       p.position.add(p.userData.vel.clone().multiplyScalar(delta));
     }
 
     p.userData.life -= delta;
+
+    // 自定义逐帧动画：特效层（VX.vfx）全部走这里，避免为每种特效加分支
+    if (p.userData.update) {
+      p.userData.update(p, delta);
+    }
+
+    // billboard：软光面片始终正对相机
+    if (p.userData.billboard && camera) {
+      p.quaternion.copy(camera.quaternion);
+    }
 
     if (p.userData.weapon) {
       var w = p.userData.weapon;
@@ -172,6 +550,13 @@ function update(delta) {
     }
 
     if (p.userData.playerDamage) {
+      // 倒地待救：怪物子弹直接穿过，不再结算伤害。
+      // 否则会反复触发死亡流程，血条在 0 附近抖动。
+      if (GS.downed) {
+        scene.remove(p);
+        projectiles.splice(i, 1);
+        continue;
+      }
       if (Math.random() < 0.5) {
         var ftrail = new THREE.Mesh(
           new THREE.SphereGeometry(0.07, 4, 4),
@@ -191,6 +576,7 @@ function update(delta) {
         // playerDamage 已按"击杀所需次数"计算（防御已计入），此处不再重复减防
         var pdmg = p.userData.playerDamage;
         if (GS._shielded) { pdmg = Math.ceil(pdmg * 0.1); showMessage('🛡️ 护盾格挡!', 0x9944ff); }
+        if (GS._invulnTimer > 0) pdmg = 0;   // 复活无敌
         GS.hp -= pdmg;
         hitFlash = 0.3;
         AudioMgr.playHurt();
@@ -198,10 +584,40 @@ function update(delta) {
         showMessage('💥 被击中! -' + pdmg + '❤️', 0xff4444);
         scene.remove(p);
         projectiles.splice(i, 1);
-        if (GS.hp <= 0) { GS.hp = 0; GS.gameOver = true; GS.running = false; showGameOver(); }
+        if (GS.hp <= 0) handlePlayerDeath('hp');
         continue;
       }
     }
+    // 队友的攻击特效弹（cosmeticShot）：纯装饰。
+    // 命中怪物只出爆点 + 闪白，**不扣血、不击退、不判定击杀** ——
+    // 伤害由发起攻击的那一端通过 monster_damage 上报、主机权威结算。
+    // 不走下面那段，避免同一发子弹被结算两次。
+    if (p.userData.cosmeticShot) {
+      var cosTargets = monsters.concat(bosses);
+      for (var ci = 0; ci < cosTargets.length; ci++) {
+        var cm = cosTargets[ci];
+        if (!cm.userData.active) continue;
+        var cScale = (cm.userData.type && cm.userData.type.scale) || 1;
+        if (p.position.distanceTo(cm.position) < 1.8 * cScale) {
+          cm.userData.hitFlash = 0.15;
+          var fxCol = p.userData.fxColor || 0xffffff;
+          if (window.VX && VX.vfx) {
+            VX.vfx.impact(p.position, fxCol, { scale: 0.95, chipColor: fxCol, chipCount: 8 });
+          }
+          AudioMgr.playHit();
+          scene.remove(p);
+          break;
+        }
+      }
+      // 这里直接 continue，跳过了循环末尾的"寿命到点就移除"，
+      // 所以必须自己补一次，否则打空的子弹会永远留在 projectiles 里
+      if (p.parent && p.userData.life <= 0) {
+        scene.remove(p);
+        projectiles.splice(i, 1);
+      }
+      continue;
+    }
+
     if (p.userData.damage) {
       // 将抓捕者也加入可攻击目标
       var targetMonsters = monsters.concat(bosses);
@@ -218,14 +634,24 @@ function update(delta) {
         var hitScale = (tm.userData.type && tm.userData.type.scale) || 1;
 
         if (dist < 1.8 * hitScale) {
-          // 命中伤害限制：Boss至少25发、小怪10发子弹击杀
+          // 命中伤害限制：Boss至少20发(正好一匣弹药)、小怪10发子弹击杀
           // 抓捕者也按10发计算
-          var isChaser = (tm === chaserMonster);
-          var minHits = tm.userData.isBoss ? 25 : 10;
-          var perHitCap = Math.ceil((tm.userData.type.hp || 100) / minHits);
-          var dealt = Math.max(1, Math.min(p.userData.damage, perHitCap));
-          tm.userData.hp -= dealt;
-          monsterHitFlash = 0.2;
+          // 统一走 playerDamageGuard：只防秒杀，不再压制正常伤害
+          var dealt = (typeof playerDamageGuard === 'function')
+            ? playerDamageGuard(tm, p.userData.damage)
+            : Math.max(1, Math.round(p.userData.damage));
+          var _projIsChaser = (typeof chaserMonster !== 'undefined' && tm === chaserMonster);
+          var _projKilled = dealMonsterDamage(tm, dealt, _projIsChaser);
+          tm.userData.hitFlash = 0.2;
+          // 命中硬直：短暂停顿+微击退，让子弹有"打中了"的手感
+          tm.userData.staggerTimer = Math.max(tm.userData.staggerTimer || 0, tm.userData.isBoss ? 0.1 : 0.2);
+          if (!tm.userData.isBoss && p.userData.vel) {
+            var kb = p.userData.vel.clone();
+            kb.y = 0;
+            if (kb.lengthSq() > 0.0001) {
+              tm.position.add(kb.normalize().multiplyScalar(0.35));
+            }
+          }
           AudioMgr.playHit();
           showMessage('💥 命中! -' + dealt, 0x44ff88);
 
@@ -233,63 +659,13 @@ function update(delta) {
 
           var hitColor = p.userData.weapon ? p.userData.weapon.color : 0xffd700;
 
-          var explode = new THREE.Mesh(
-            new THREE.SphereGeometry(0.4, 8, 8),
-            new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1 })
-          );
-          explode.position.copy(p.position);
-          explode.userData = { life: 0.25, expandSpeed: 3, fade: true };
-          scene.add(explode);
-          projectiles.push(explode);
-
-          for (var ringIdx = 0; ringIdx < 2; ringIdx++) {
-            (function (delay, rColor) {
-              setTimeout(function () {
-                var expRing = new THREE.Mesh(
-                  new THREE.RingGeometry(0.15, 0.2, 16),
-                  new THREE.MeshBasicMaterial({ color: rColor, transparent: true, opacity: 0.8, side: THREE.DoubleSide })
-                );
-                expRing.position.copy(p.position);
-                expRing.lookAt(camera.position);
-                expRing.userData = { expandSpeed: 4, life: 0.4, fade: true };
-                scene.add(expRing);
-                projectiles.push(expRing);
-              }, delay);
-            })(ringIdx * 40, ringIdx === 0 ? hitColor : 0xffd700);
-          }
-
-          for (var jParticle = 0; jParticle < 15; jParticle++) {
-            (function () {
-              var sp = new THREE.Mesh(
-                new THREE.SphereGeometry(0.05 + Math.random() * 0.03, 4, 4),
-                new THREE.MeshBasicMaterial({ color: [hitColor, 0xffd700, 0xffffff][Math.floor(Math.random() * 3)], transparent: true, opacity: 1 })
-              );
-              sp.position.copy(p.position);
-              var angle = Math.random() * Math.PI * 2;
-              var speed = 2 + Math.random() * 3;
-              sp.userData = {
-                vel: new THREE.Vector3(Math.cos(angle) * speed, Math.random() * 2, Math.sin(angle) * speed),
-                life: 0.6,
-                fade: true
-              };
-              scene.add(sp);
-              projectiles.push(sp);
-            })();
-          }
-
-          for (var arc = 0; arc < 5; arc++) {
-            var arcParticle = new THREE.Mesh(
-              new THREE.BoxGeometry(0.02, 0.15, 0.02),
-              new THREE.MeshBasicMaterial({ color: 0xaaffff, transparent: true, opacity: 0.9 })
-            );
-            arcParticle.position.copy(p.position);
-            arcParticle.position.x += ((Math.random() - 0.5) * 0.8);
-            arcParticle.position.y += ((Math.random() - 0.5) * 0.6);
-            arcParticle.position.z += ((Math.random() - 0.5) * 0.8);
-            arcParticle.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
-            arcParticle.userData = { life: 0.2, fade: true };
-            scene.add(arcParticle);
-            projectiles.push(arcParticle);
+          // 命中爆点：白热核心 + 扩散环 + 地面冲击波 + 放射线 + 碎屑 + 点光 + 震屏
+          if (window.VX && VX.vfx) {
+            VX.vfx.impact(p.position, hitColor, {
+              scale: 1.05,
+              chipColor: hitColor,
+              chipCount: 10
+            });
           }
 
           scene.remove(p);
@@ -310,7 +686,7 @@ function update(delta) {
             }
           }
 
-          if (tm.userData.hp <= 0) {
+          if (_projKilled) {
             // 判断是否为抓捕者
             if (tm === chaserMonster) {
               // 抓捕者被击败
@@ -342,24 +718,26 @@ function update(delta) {
     }
   }
 
-  // 检查怪物攻击玩家逻辑（怪物可出房间追击，近战范围内即可攻击）
-  var activeMonsters = monsters.concat(bosses);
-  for (var mIdx = 0; mIdx < activeMonsters.length; mIdx++) {
-    var am = activeMonsters[mIdx];
-    if (am.userData.active) {
-      var mDist = am.position.distanceTo(player.position);
-      // 远程小怪攻击距离更远；Boss与近战小怪只能近距离攻击
-      var attackRange = (!am.userData.isBoss && am.userData.type && am.userData.type.ranged) ? 8 : 3.5;
-      if (mDist < attackRange * ((am.userData.type && am.userData.type.scale) || 1)) {
-        monsterAttack(am);
+  // 检查怪物攻击玩家逻辑（加入者跳过，由主机权威决定）
+  if (GS.mode !== 'multiplayer' || GS.isHost) {
+    var activeMonsters = monsters.concat(bosses);
+    for (var mIdx = 0; mIdx < activeMonsters.length; mIdx++) {
+      var am = activeMonsters[mIdx];
+      if (am.userData.active) {
+        var mDist = am.position.distanceTo(player.position);
+        // 远程小怪攻击距离更远；Boss与近战小怪只能近距离攻击
+        var attackRange = (!am.userData.isBoss && am.userData.type && am.userData.type.ranged) ? 8 : 3.5;
+        if (mDist < attackRange * ((am.userData.type && am.userData.type.scale) || 1)) {
+          monsterAttack(am);
+        }
       }
     }
   }
 
-  if (hitFlash > 0) {
-    document.body.style.backgroundColor = 'rgba(255,0,0,0.03)';
-  } else {
-    document.body.style.backgroundColor = '';
+  // 受击红晕：伤害越新越浓，随 hitFlash 衰减淡出
+  var vig = document.getElementById('hit-vignette');
+  if (vig && !(captureState && captureState.captured)) {
+    vig.style.opacity = hitFlash > 0 ? Math.min(1, hitFlash * 3).toFixed(2) : '0';
   }
 
   updateMinimap();
@@ -368,6 +746,49 @@ function update(delta) {
 // ============================================================
 // 怪物 AI 更新 (支持多怪物与返回初始房间逻辑)
 // ============================================================
+// 追击速度硬上限：普通追击不允许超过 BALANCE.combat.chaseSpeedCap，
+// 保证玩家拿到一只急速之靴就能甩开追兵；冲刺/扑击是刻意保留的例外。
+function clampChaseSpeed(spd) {
+  var combat = (typeof BALANCE !== 'undefined' && BALANCE.combat) ? BALANCE.combat : {};
+  var cap = combat.chaseSpeedCap || 5.6;
+  var d = (typeof balanceDiff === 'function') ? balanceDiff(GS.difficulty) : { chase: 1 };
+  return Math.min(spd, cap * (d.chase || 1));
+}
+
+// ============================================================
+// 统一墙体碰撞
+//
+// 每帧对「玩家 / 所有怪物 / 抓捕者」各收一次，位置一律推出墙体。
+// 放在这里而不是各个移动分支里，是因为位移来源太多：
+//   主动移动、怪物冲刺、受击击退、技能位移、重生落点……
+//   逐个分支加碰撞必然漏（而且漏了很难看出来），
+//   统一在一帧末尾收口，任何来源的位移都会被纠正。
+// ============================================================
+function applyEntityCollisions() {
+  if (typeof resolveWallCollision !== 'function') return;
+
+  // 玩家：root.scale 会放大模型（爸爸 1.07），半径跟着放大
+  if (typeof player !== 'undefined' && player) {
+    var pr = (player.userData.radius || 0.4) * (player.scale.x || 1);
+    resolveWallCollision(player.position, pr, player.position.y);
+  }
+
+  // 小怪 + Boss：userData.radius 已经含过部位缩放，不要再乘 mesh.scale
+  var list = [];
+  if (typeof monsters !== 'undefined' && monsters) list = list.concat(monsters);
+  if (typeof bosses !== 'undefined' && bosses) list = list.concat(bosses);
+  for (var i = 0; i < list.length; i++) {
+    var m = list[i];
+    if (!m || !m.userData || !m.userData.active || !m.parent) continue;
+    resolveWallCollision(m.position, m.userData.radius || 0.9, m.position.y);
+  }
+
+  // 抓捕者
+  if (typeof chaserMonster !== 'undefined' && chaserMonster && chaserMonster.parent) {
+    resolveWallCollision(chaserMonster.position, chaserMonster.userData.radius || 1.0, chaserMonster.position.y);
+  }
+}
+
 function updateMonster(delta) {
   // 处理小怪物列表
   for (var i = monsters.length - 1; i >= 0; i--) {
@@ -398,7 +819,7 @@ function updateMonster(delta) {
 function respawnMonster(m) {
   var baseT = (typeof pickMinionType === 'function') ? pickMinionType() : (m.userData.baseType || m.userData.type);
   var t = scaleMonsterType(baseT);
-  var rm = m.userData.homeRoom;
+  var rm = m.userData.homeRoom || ROOMS[roomIndexOf(m.position.x, m.position.z)] || ROOMS[0];
 
   var g = buildMonsterMesh(t);
   if (t.scale && t.scale !== 1) g.scale.setScalar(t.scale);
@@ -448,11 +869,47 @@ function updateSingleMonsterAI(m, delta) {
     return;
   }
 
-  var dir = new THREE.Vector3().subVectors(player.position, m.position);
+  // 受击硬直：命中后短暂停顿，让攻击有打断感
+  if (m.userData.staggerTimer > 0) {
+    m.userData.staggerTimer -= delta;
+    return;
+  }
+
+  // 联机主机端：怪物追踪最近的「活着的」玩家（含加入者）；单机/加入者端为本地玩家。
+  //
+  // 这里必须用 nearestAlivePlayerPos 而不是 nearestPlayerPos：
+  // 玩家倒地后若仍是追击目标，怪物会贴到尸体旁停住不动（近战只在 dist>2.5 时移动），
+  // 而攻击又因为 GS.downed 被拦掉 —— 看起来就是"怪物卡死不走了"。
+  var _tgtPos = (typeof nearestAlivePlayerPos === 'function')
+    ? nearestAlivePlayerPos(m.position)
+    : player.position;
+
+  // 场上没有任何活着的玩家（全员倒地）：怪物原地待机，别围着尸体打转。
+  // 这种局面主机很快就会走 all_down 结算，不需要再演算 AI。
+  if (!_tgtPos) {
+    m.userData.aggroTimer = 0;
+    m.userData.attackCooldown = 0;
+    return;
+  }
+
+  var dir = new THREE.Vector3().subVectors(_tgtPos, m.position);
   var dist = dir.length();
   dir.y = 0;
 
+  // 跨房间时改走门。
+  // 怪物只会在同房间内直线追击；目标在墙另一边时，直线走会一直顶着墙
+  // 被碰撞推回来 —— 这就是玩家看到的「怪物卡墙」。
+  // 注意 dist 仍然用「到真实目标的距离」，攻击判定不受影响。
+  var _navDir = dir.clone().normalize();
+  if (typeof monsterNavDir === 'function') {
+    _navDir = monsterNavDir(m, _tgtPos, _navDir);
+  }
+
   var home = m.userData.homeRoom;
+  // 安全兜底：没有 homeRoom 的怪物（如加入者端同步创建的）使用中央房间
+  if (!home) {
+    home = ROOMS[0];
+  }
   var distToHome = Math.sqrt(Math.pow(m.position.x - home.cx, 2) + Math.pow(m.position.z - home.cz, 2));
 
   var timeSinceAttacked = clock.elapsedTime - (m.userData.lastAttackedTime || 0);
@@ -520,6 +977,19 @@ function updateSingleMonsterAI(m, delta) {
     var CHASE_LIMIT_BOSS = 25;
     // 战斗判定：见到角色（追击范围内）/ 被激怒 / 最近被攻击
     var inCombat = isAggro || dist < CHASE_LIMIT_BOSS || timeSinceAttacked < 5;
+
+    // 玩家就在隔壁房间时也必须算"战斗中"。
+    // 原来只看直线距离，隔一道墙 dist 很容易超过 25 → Boss 判定脱战 → 5 秒后睡觉，
+    // 玩家看到的就是"Boss 明明在墙那边却一动不动"。
+    // 房间是 3x3 网格，同房间或相邻房间（曼哈顿 40）都算发现玩家。
+    if (!inCombat && _tgtPos && typeof roomIndexOf === 'function' && typeof ROOMS !== 'undefined' && ROOMS) {
+      var _bMy = ROOMS[roomIndexOf(m.position.x, m.position.z)];
+      var _bTg = ROOMS[roomIndexOf(_tgtPos.x, _tgtPos.z)];
+      if (_bMy && _bTg) {
+        var _roomDist = Math.abs(_bMy.cx - _bTg.cx) + Math.abs(_bMy.cz - _bTg.cz);
+        if (_roomDist <= 40) inCombat = true;
+      }
+    }
     if (inCombat) {
       m.userData.nonCombatTimer = 0;
     } else {
@@ -534,11 +1004,25 @@ function updateSingleMonsterAI(m, delta) {
       }
     }
 
+    // 目标在「同房间或相邻房间」时，即使直线距离超过追击上限也要追过去 ——
+    // 房间是 3x3 网格，隔一道墙直线距离就有 40，旧逻辑会判定"太远了，回家"，
+    // 玩家看到的就是"Boss 在墙那边却转身走了"。
+    var _bReach = false;
+    if (_tgtPos && typeof roomIndexOf === 'function' && typeof ROOMS !== 'undefined' && ROOMS) {
+      var _rMy = ROOMS[roomIndexOf(m.position.x, m.position.z)];
+      var _rTg = ROOMS[roomIndexOf(_tgtPos.x, _tgtPos.z)];
+      if (_rMy && _rTg) {
+        _bReach = (Math.abs(_rMy.cx - _rTg.cx) + Math.abs(_rMy.cz - _rTg.cz)) <= 40;
+      }
+    }
+    // 可达时把追击上限放开，让下面的追击分支生效（内部会走 monsterNavDir 导航）
+    var _bChaseLimit = _bReach ? 9999 : CHASE_LIMIT_BOSS;
+
     var shouldReturnHome = false;
-    if (dist > CHASE_LIMIT_BOSS) {
+    if (dist > _bChaseLimit) {
       shouldReturnHome = true;
     }
-    if (timeSinceAttacked > 8.0 && !isAggro && dist > 12) {
+    if (timeSinceAttacked > 8.0 && !isAggro && dist > 12 && !_bReach) {
       shouldReturnHome = true;
     }
 
@@ -558,23 +1042,26 @@ function updateSingleMonsterAI(m, delta) {
       if (m.userData.hp < t.hp) {
         m.userData.hp = Math.min(m.userData.hp + delta * t.hp * 0.05, t.hp);
       }
-    } else if (dist > 2.5 && dist < CHASE_LIMIT_BOSS) {
-      // 苏醒状态见到角色：主动追击攻击
-      var speed = (t.speed || 2) * (m.userData.speedMul || 1) * (isAggro ? 1.4 : 1.0);
-      var move = dir.clone().normalize().multiplyScalar(speed * delta);
+    } else if (dist > 2.5 && dist < _bChaseLimit) {
+      // 苏醒状态见到角色：主动追击攻击（跨房间时由 _navDir 导航走门）
+      var speed = clampChaseSpeed((t.speed || 2) * (m.userData.speedMul || 1) * (isAggro ? 1.4 : 1.0));
+      var move = _navDir.clone().multiplyScalar(speed * delta);
       m.position.add(move);
       m.rotation.y = Math.atan2(move.x, move.z);
       m.userData.walkPhase += delta * speed * 3;
     }
   } else {
     // ===== 小怪：全图巡逻，遇到角色就追击攻击 =====
-    if (dist < CHASE_LIMIT && dist > 2.5) {
+    // 冲刺期间由下面的冲刺逻辑单独驱动位移，这里必须让开，
+    // 否则「普通追击 + 冲刺」会叠加成 6 倍移速，玩家完全无法躲避
+    if (dist < CHASE_LIMIT && dist > 2.5 && !(m.userData.dashing > 0)) {
       // 遇到角色：发起追击
-      var speed = (t.speed || 2) * (m.userData.speedMul || 1) * (isAggro ? 1.4 : 1.0);
+      var speed = clampChaseSpeed((t.speed || 2) * (m.userData.speedMul || 1) * (isAggro ? 1.4 : 1.0));
+      // 扑击型：只在激怒时小幅超出上限，保留"突进"手感但不再离谱
       if (t.charge && isAggro) {
-        speed *= 2.5;
+        speed *= 1.5;
       }
-      var move = dir.clone().normalize().multiplyScalar(speed * delta);
+      var move = _navDir.clone().multiplyScalar(speed * delta);
       m.position.add(move);
       m.rotation.y = Math.atan2(move.x, move.z);
       m.userData.walkPhase += delta * speed * 3;
@@ -593,7 +1080,11 @@ function updateSingleMonsterAI(m, delta) {
     if (m.userData.dashing > 0) {
       m.userData.dashing -= delta;
       if (dist > 1.5) {
-        var dashMove = dir.clone().normalize().multiplyScalar((t.speed || 2) * 5 * delta);
+        var _cbt = (typeof BALANCE !== 'undefined' && BALANCE.combat) ? BALANCE.combat : {};
+        // 冲刺速度同样设上限：不封顶的话最快的小怪能冲到玩家移速的 2 倍，根本躲不开
+        var _dashSpd = Math.min((t.speed || 2) * (_cbt.dashMul || 3.0),
+          (_cbt.chaseSpeedCap || 5.6) * (_cbt.dashSpeedCapMul || 1.5));
+        var dashMove = _navDir.clone().multiplyScalar(_dashSpd * delta);
         m.position.add(dashMove);
         m.rotation.y = Math.atan2(dashMove.x, dashMove.z);
         m.userData.walkPhase += delta * 20;
@@ -629,7 +1120,8 @@ function updateSingleMonsterAI(m, delta) {
       );
       fb.position.copy(m.position);
       fb.position.y += 1.0 * (t.scale || 1);
-      var aimPoint = player.position.clone();
+      // 瞄准「当前仇恨目标」而不是本地玩家：倒地的人不该继续被弹丸集火
+      var aimPoint = _tgtPos.clone();
       aimPoint.y += 0.8;
       var fdir = new THREE.Vector3().subVectors(aimPoint, fb.position).normalize();
       fb.userData = { vel: fdir.multiplyScalar(5), life: 4, playerDamage: monsterHitDamage(m) };
@@ -637,6 +1129,17 @@ function updateSingleMonsterAI(m, delta) {
       projectiles.push(fb);
       AudioMgr.playAttack();
       showMessage('💀 远程怪发射弹丸!', 0xff6600);
+
+      // 广播给加入者：加入者不跑怪物 AI，看不到弹丸，
+      // 表现就是"远程怪对着空气开火、我却莫名掉血"。
+      if (GS.mode === 'multiplayer' && GS.isHost && typeof PeerManager !== 'undefined' && PeerManager.connected) {
+        PeerManager.broadcast('monster_shot', {
+          x: fb.position.x, y: fb.position.y, z: fb.position.z,
+          dx: fdir.x, dy: fdir.y, dz: fdir.z,
+          dmg: monsterHitDamage(m),
+          color: t.emissive || 0xff4422
+        });
+      }
     }
   }
 
@@ -656,7 +1159,9 @@ function updateSingleMonsterAI(m, delta) {
     m.children[0].scale.setScalar(breathe);
   }
 
-  if (monsterHitFlash > 0) {
+  // 逐怪受击闪光（只有被打中的怪变亮）
+  if (m.userData.hitFlash > 0) {
+    m.userData.hitFlash -= delta;
     m.children.forEach(function (child) {
       if (child.isMesh && child.material.emissiveIntensity !== undefined) {
         child.material.emissiveIntensity = 0.8;
@@ -763,15 +1268,22 @@ function updateMinionWander(m, t, delta) {
       var midZ = (cz + nz) / 2;
       waypoints.push({ x: midX, z: midZ });
     } else {
-      // 不相邻（对角房间）：经过中间房间的门
-      // 先到当前房间通向中间的门
-      var toMidX = cx === 0 ? 0 : (cx > 0 ? H : -H);
-      var toMidZ = cz === 0 ? 0 : (cz > 0 ? H : -H);
-      waypoints.push({ x: toMidX, z: toMidZ });
-      // 再到目标房间的门
-      var fromMidX = nx === 0 ? 0 : (nx > 0 ? H : -H);
-      var fromMidZ = nz === 0 ? 0 : (nz > 0 ? H : -H);
-      waypoints.push({ x: fromMidX, z: fromMidZ });
+      // 不相邻（对角房间）：必须走两道门，先沿 x 再沿 z。
+      //
+      // 旧写法算出来的是「当前房间朝中间的门」+「目标房间朝中间的门」，
+      // 例如从 (0,0) 去 (40,-40) 会得到 (0,0) 和 (20,-20) ——
+      // (0,0) 是原地，(20,-20) 是东北房间的**墙角**，根本不是门。
+      // 怪物照着这个点直线走，必然顶在墙上卡死。
+      //
+      // 正确做法：门一定开在「当前房间朝向目标的那面墙」上，
+      // 坐标就是 (cx ± 20, cz) 或 (cx, cz ± 20)，且 cz/cx 本身就是房间中心坐标，
+      // 所以这道门一定存在。
+      var stepX = (nx > cx) ? 1 : -1;
+      var stepZ = (nz > cz) ? 1 : -1;
+      // 第一道门：当前房间朝目标 x 方向的墙
+      waypoints.push({ x: cx + stepX * H, z: cz });
+      // 第二道门：过门后所在房间（cx ± 40）朝目标 z 方向的墙
+      waypoints.push({ x: cx + stepX * 2 * H, z: cz + stepZ * H });
     }
     // 目标房间内随机落点
     waypoints.push({
@@ -904,6 +1416,44 @@ function updateMinimap() {
 
   // 小地图不显示怪物位置
 
+  // 小地图显示怪物位置（联机模式加入者端显示同步的怪物）
+  if (GS.mode === 'multiplayer' && !GS.isHost) {
+    // 显示小怪（红色点）
+    if (typeof monsters !== 'undefined') {
+      for (var mi = 0; mi < monsters.length; mi++) {
+        var mm = monsters[mi];
+        if (mm && mm.userData && mm.userData.active && mm.parent) {
+          var mmx = ox + mm.position.x * scale, mmz = oz + mm.position.z * scale;
+          ctx.fillStyle = 'rgba(255,50,50,0.6)';
+          ctx.beginPath(); ctx.arc(mmx, mmz, 2, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+    }
+    // 显示Boss（紫色大点）
+    if (typeof bosses !== 'undefined') {
+      for (var bi = 0; bi < bosses.length; bi++) {
+        var bb = bosses[bi];
+        if (bb && bb.userData && bb.userData.active && bb.parent) {
+          var bbx = ox + bb.position.x * scale, bbz = oz + bb.position.z * scale;
+          ctx.fillStyle = 'rgba(180,50,255,0.8)';
+          ctx.beginPath(); ctx.arc(bbx, bbz, 3.5, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = 'rgba(180,50,255,0.4)';
+          ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.arc(bbx, bbz, 5, 0, Math.PI * 2); ctx.stroke();
+        }
+      }
+    }
+    // 显示追捕者（白色闪烁点）
+    if (typeof chaserMonster !== 'undefined' && chaserMonster && chaserMonster.parent) {
+      var cx2 = ox + chaserMonster.position.x * scale, cz2 = oz + chaserMonster.position.z * scale;
+      var pulse2 = 2 + Math.sin(clock.elapsedTime * 4) * 0.5;
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.beginPath(); ctx.arc(cx2, cz2, pulse2, 0, Math.PI * 2); ctx.fill();
+    }
+  } else if (GS.mode !== 'multiplayer') {
+    // 单机模式：显示怪物位置（原有逻辑保留）
+  }
+
   var cx = ox + player.position.x * scale, cz = oz + player.position.z * scale;
   ctx.fillStyle = '#44ff88';
   ctx.beginPath(); ctx.arc(cx, cz, 3.5, 0, Math.PI * 2); ctx.fill();
@@ -912,6 +1462,22 @@ function updateMinimap() {
   ctx.beginPath(); ctx.moveTo(cx, cz);
   ctx.lineTo(cx + Math.sin(player.rotation.y) * 9, cz + Math.cos(player.rotation.y) * 9);
   ctx.stroke();
+
+  // 联机模式：显示远程玩家位置
+  if (GS.mode === 'multiplayer' && typeof SyncManager !== 'undefined') {
+    for (var rpid in SyncManager.remotePlayers) {
+      var rp = SyncManager.remotePlayers[rpid];
+      if (rp && rp.state) {
+        var rx = ox + rp.state.x * scale, rz = oz + rp.state.z * scale;
+        ctx.fillStyle = '#66ccff';
+        ctx.beginPath(); ctx.arc(rx, rz, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(102,204,255,0.5)';
+        ctx.font = '6px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(rp.playerName || '玩家', rx, rz - 5);
+      }
+    }
+  }
 
   ctx.fillStyle = 'rgba(0,0,0,0.4)';
   ctx.fillRect(2, 2, 50, 8);
@@ -925,19 +1491,374 @@ function updateMinimap() {
 }
 
 // ============================================================
+// 主机：应用道具效果到加入者（用于联机模式下加入者拾取道具）
+// ============================================================
+function applyItemEffectToJoiner(p, itemId) {
+  switch (itemId) {
+    case 'hpPotion':
+      var maxHp = (p.maxHp || 100) + (p.maxHpBonus || 0);
+      // 同上：倒地（0 血）时不能被 || 100 当成满血再加 30
+      p.hp = Math.min(maxHp, ((typeof p.hp === 'number' ? p.hp : 100)) + 30);
+      break;
+    case 'speedBoots':
+      p.moveSpeedBonus = (p.moveSpeedBonus || 0) + 1.5;
+      break;
+    case 'weapon':
+      p.curWeapon = '几何能量珠';
+      break;
+    case 'atkGem':
+      p.atkBonus = (p.atkBonus || 0) + 10;
+      p.atkSpeedBonus = (p.atkSpeedBonus || 0) + 0.05;
+      break;
+    case 'defGem':
+      p.maxHpBonus = (p.maxHpBonus || 0) + 20;
+      p.defBonus = (p.defBonus || 0) + 5;
+      break;
+    case 'flashlight':
+      p.hasFlashlight = true;
+      break;
+    case 'fragment':
+      p.fragments = (p.fragments || 0) + 1;
+      if (p.fragments >= 2) {
+        p.fragments = 0;
+        p.energy = (p.energy || 0) + 1;
+      }
+      break;
+  }
+}
+
+// ============================================================
+// 主机：处理加入者的移动输入
+// ============================================================
+function processJoinerInputs(delta) {
+  if (GS.mode !== 'multiplayer' || !GS.isHost) return;
+  if (typeof PeerManager === 'undefined') return;
+
+  var localEnergyOrb = window.energyOrb;
+  var localNormalChests = window.normalChests;
+  var localItems = window.items;
+
+  for (var pid in PeerManager.players) {
+    if (pid === PeerManager.playerId) continue;
+    var p = PeerManager.players[pid];
+    // 位置由加入者通过 player_input 发送，主机直接信任（客户端预测）
+    if (!p.position) {
+      p.position = { x: 0, z: -4 };
+      p.rotationY = 0;
+    }
+
+    // 处理加入者技能状态（用于快照同步给其他加入者）
+    if (p.skill) {
+      p.skillActive = 3.0;
+      p.skill = false;
+    }
+    if (p.skillActive > 0) {
+      p.skillActive -= delta;
+    }
+
+    // 检测加入者是否靠近宝箱
+    if (p._quizCooldown === undefined) p._quizCooldown = 0;
+    if (p._quizCooldown > 0) p._quizCooldown -= delta;
+
+    // 检测金色宝箱（使用 per-player 冷却，避免被全局 currentQuizChest 阻塞）
+    // 倒地的人只能爬，不能再开箱 / 捡东西
+    if (!p.downed && localEnergyOrb && localEnergyOrb.userData && localEnergyOrb.userData.active) {
+      var distToOrb = Math.sqrt(
+        Math.pow(p.position.x - localEnergyOrb.position.x, 2) +
+        Math.pow(p.position.z - localEnergyOrb.position.z, 2)
+      );
+      if (distToOrb < 2 && p._quizCooldown <= 0 && !(localEnergyOrb.userData.cooldown > 0)) {
+        p._quizCooldown = 2;
+        // 和主机本地开箱保持一致：金色宝箱答错后进 8 秒冷却。
+        // 原来这里不设冷却，加入者可以每 2 秒无限开同一个金箱刷能量。
+        triggerQuizForPlayer(pid, pickRandomQuestion(), true);
+      }
+    }
+
+    // 检测普通宝箱（使用 per-player 冷却）
+    if (!p.downed && localNormalChests) {
+      for (var ni = 0; ni < localNormalChests.length; ni++) {
+        var nc = localNormalChests[ni];
+        if (!nc.userData.active) continue;
+        var distToChest = Math.sqrt(
+          Math.pow(p.position.x - nc.position.x, 2) +
+          Math.pow(p.position.z - nc.position.z, 2)
+        );
+        if (distToChest < 1.5 && p._quizCooldown <= 0) {
+          p._quizCooldown = 2;
+          // 必须走 destroyChestItem 而不是只把 active 置 false：
+          // 补刷逻辑（30 秒后移除并在别处重生）和跨端广播都在这个函数里，
+          // 只置 active=false 会让这个宝箱永远消失、再也不会补刷。
+          if (typeof destroyChestItem === 'function') {
+            destroyChestItem(nc);
+          } else {
+            nc.userData.active = false;
+          }
+          triggerQuizForPlayer(pid, pickRandomQuestion());
+          break;
+        }
+      }
+    }
+
+    // 检测道具拾取。
+    // 单独 try 保护：这一段前面还有宝箱检测，只要那边抛异常，
+    // 加入者就再也捡不到道具了，而异常会被 update() 的 catch 静默吞掉。
+    try {
+      if (!p.downed && localItems) {
+      for (var ii = 0; ii < localItems.length; ii++) {
+        var it = localItems[ii];
+        if (!it.userData.active) continue;
+        var distToItem = Math.sqrt(
+          Math.pow(p.position.x - it.position.x, 2) +
+          Math.pow(p.position.z - it.position.z, 2)
+        );
+        if (distToItem < 1.5) {
+          it.userData.active = false;
+          // 应用道具效果到加入者状态
+          var itemId = it.userData.itemType ? it.userData.itemType.id : null;
+          if (itemId) {
+            applyItemEffectToJoiner(p, itemId);
+          }
+          // 广播拾取事件：所有加入者按 netId 移除本地道具，
+          // 拾取者本人还要在本地应用道具效果（主机的 applyItemEffectToJoiner
+          // 只维护 PeerManager.players 里那份记录，改不到加入者的 GS）。
+          PeerManager.broadcast('item_pickup_sync', {
+            netId: it.userData.netId || null,
+            itemType: it.userData.itemType ? it.userData.itemType.id : null,
+            pickerId: pid,
+            pickerName: p.name || '队友'
+          });
+          // 移除道具并安排刷新
+          var pickRoom = null;
+          for (var ri = 0; ri < ROOMS.length; ri++) {
+            if (Math.abs(it.position.x - ROOMS[ri].cx) < roomSize / 2 &&
+              Math.abs(it.position.z - ROOMS[ri].cz) < roomSize / 2) {
+              pickRoom = ROOMS[ri];
+              break;
+            }
+          }
+          // 从场景移除
+          if (it.parent) scene.remove(it);
+          localItems.splice(ii, 1);
+          ii--;
+          // 10秒后刷新
+          if (pickRoom) {
+            (function (room, roomCx, roomCz) {
+              setTimeout(function () {
+                spawnItemsInRoom(room);
+                // 联机模式：广播道具刷新通知
+                if (GS.mode === 'multiplayer' && GS.isHost && typeof PeerManager !== 'undefined') {
+                  PeerManager.broadcast('item_refresh', {
+                    roomCx: roomCx,
+                    roomCz: roomCz
+                  });
+                }
+              }, 10000);
+            })(pickRoom, pickRoom.cx, pickRoom.cz);
+          }
+        }
+      }
+      }
+    } catch (e) {
+      console.error('[Multiplayer] 加入者道具拾取检测出错:', e && e.message);
+    }
+
+    // 检测加入者拾取碎片（由主机权威处理）
+    var localFragments = window.fragmentDrops;
+    if (localFragments) {
+      for (var fi = 0; fi < localFragments.length; fi++) {
+        var ff = localFragments[fi];
+        if (!ff.parent) continue;
+        var distToFrag = Math.sqrt(
+          Math.pow(p.position.x - ff.position.x, 2) +
+          Math.pow(p.position.z - ff.position.z, 2)
+        );
+        if (distToFrag < 1.5) {
+          // 加入者拾取碎片
+          if (p.fragments === undefined) p.fragments = 0;
+          p.fragments = (p.fragments || 0) + 1;
+          if (p.fragments >= 2) {
+            p.fragments = 0;
+            p.energy = (p.energy || 0) + 1;
+          }
+          // 移除碎片
+          if (ff.parent) scene.remove(ff);
+          localFragments.splice(fi, 1);
+          fi--;
+          break;
+        }
+      }
+    }
+
+    // 加入者怪物攻击由本地 update() 检测，主机不再重复计算
+
+    // 注意：这里原来有一段「加入者 hp<=0 就整队失败」的旧逻辑，
+    // 已经被倒地/复活机制取代 —— 加入者血量为 0 只是"倒下待救"，
+    // 主机要能过去把他救起来。保留它会导致**队友一倒地，主机这局直接结束**，
+    // 表现就是"怪物突然全都不动了"（主机 update 被 gameOver 挡掉）。
+    // 「全员倒地」的失败判定统一由 checkAllDown() 负责（见 ReviveSystem.js）。
+
+    // 更新远程玩家 3D 模型位置（主机端渲染加入者）
+    var rp = SyncManager.remotePlayers[pid];
+    if (rp) {
+      // 主机端：加入者位置每帧更新，直接设置位置（不插值，避免延迟卡顿）
+      rp.mesh.position.x = p.position.x;
+      rp.mesh.position.z = p.position.z;
+      rp.mesh.rotation.y = p.rotationY || 0;
+      // 保存状态供快照使用（其他加入者通过快照接收位置）
+      rp.state = {
+        x: p.position.x,
+        z: p.position.z,
+        rotY: p.rotationY || 0,
+        hp: (typeof p.hp === 'number' ? p.hp : 100),
+        maxHp: p.maxHp || 100,
+        energy: p.energy || 0,
+        energyMax: p.energyMax || 5,
+        curWeapon: p.curWeapon || '木棍',
+        isJumping: p.isJumping || false,
+        // 倒地 / 飞行状态必须带上：updateRemotePlayers 靠这两个字段决定
+        // 远端模型的姿态（躺平 / 浮空）。漏了就是"队友倒了，我这边他还站着"。
+        downed: !!p.downed,
+        flying: !!p.flying,
+        isCaptured: !!p.isCaptured,
+        level: p.level || 1
+      };
+      rp.prevState = rp.state;
+      rp.interpStartTime = Date.now();
+      rp.interpDuration = 100;
+    } else {
+      // 远程玩家模型不存在，尝试创建
+      SyncManager.createRemotePlayer(pid, p.character || 'qike', p.name || '玩家');
+    }
+  }
+}
+
+// 选取随机题目
+function pickRandomQuestion() {
+  var pool = QDB[GS.difficulty] || QDB.easy;
+  if (!GS.usedQuestions) GS.usedQuestions = {};
+  if (!GS.usedQuestions[GS.difficulty]) GS.usedQuestions[GS.difficulty] = [];
+  var used = GS.usedQuestions[GS.difficulty];
+  var available = [];
+  for (var idx = 0; idx < pool.length; idx++) {
+    if (used.indexOf(idx) === -1) available.push(idx);
+  }
+  if (available.length === 0) {
+    GS.usedQuestions[GS.difficulty] = [];
+    for (var ri = 0; ri < pool.length; ri++) available.push(ri);
+  }
+  var randIdx = Math.floor(Math.random() * available.length);
+  var chosenIdx = available[randIdx];
+  used.push(chosenIdx);
+  return pool[chosenIdx];
+}
+
+// ============================================================
 // 动画循环
 // ============================================================
+// ============================================================
+// 自适应分辨率（动态分辨率缩放）
+//
+// 手机上 devicePixelRatio 普遍 2.5~3.5，固定按它渲染意味着
+// 实际像素是逻辑像素的 6~12 倍，纯 CPU 光栅化直接扛不住 ——
+// 这是"操作发顿"最主要的原因。
+//
+// 做法：每秒统计一次帧率，低于 45fps 就把渲染像素比降一档，
+// 高于 58fps 再逐步升回去。canvas 的 CSS 尺寸始终不变，
+// 所以 UI 和点击区域完全不受影响，只是画面精度变化。
+// ============================================================
+// 移动端上限压到 1.5：手机 devicePixelRatio 普遍 2.5~3.5，
+// 按原值渲染像素是逻辑像素的 6~12 倍，纯 CPU 光栅化扛不住。
+// 1.5 配合自适应下调（最低 0.7），在流畅和清晰之间取平衡。
+var _isMobileUA = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+var _pixelRatioMax = Math.min(window.devicePixelRatio || 1, _isMobileUA ? 1.5 : 2);
+var _pixelRatioNow = _pixelRatioMax;
+var _fpsFrames = 0;
+var _fpsWindowStart = 0;
+var _resCooldownUntil = 0;
+
+function adaptResolution(now) {
+  _fpsFrames++;
+  if (!_fpsWindowStart) { _fpsWindowStart = now; return; }
+  var elapsed = now - _fpsWindowStart;
+  if (elapsed < 1000) return;                       // 每秒统计一次
+
+  var fps = _fpsFrames * 1000 / elapsed;
+  _fpsFrames = 0;
+  _fpsWindowStart = now;
+
+  if (now < _resCooldownUntil) return;               // 调整后至少观察 1.5 秒
+  var next = _pixelRatioNow;
+  if (fps < 45 && _pixelRatioNow > 0.7) {
+    next = Math.max(0.7, _pixelRatioNow - 0.25);     // 掉帧 → 降精度
+  } else if (fps > 58 && _pixelRatioNow < _pixelRatioMax) {
+    next = Math.min(_pixelRatioMax, _pixelRatioNow + 0.25);   // 富余 → 升回去
+  }
+  if (next !== _pixelRatioNow) {
+    _pixelRatioNow = next;
+    renderer.setPixelRatio(next);                   // 内部会重设 drawing buffer，CSS 尺寸不变
+    _resCooldownUntil = now + 1500;
+    console.log('[Perf] fps=' + fps.toFixed(0) + ' → pixelRatio ' + next);
+  }
+}
+
 function animate() {
   requestAnimationFrame(animate);
   var delta = Math.min(clock.getDelta(), 0.05);
-  update(delta);
-  renderer.render(scene, camera);
+  var _now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  adaptResolution(_now);
+
+  try {
+    update(delta);
+  } catch (e) {
+    console.error('[Game] update() 出错:', e);
+  }
+  try {
+    renderer.render(scene, camera);
+  } catch (e) {
+    console.error('[Game] render() 出错:', e);
+  }
 }
 
 // ============================================================
 // 启动入口
 // ============================================================
 function init() {
+  console.log('[Game] init() 调用: GS.mode=' + GS.mode + ' GS.isHost=' + GS.isHost + ' PeerManager.connected=' + (PeerManager ? PeerManager.connected : 'N/A'));
   applyLevelBonuses();
+  // 重置联机广播标志
+  _gameOverBroadcasted = false;
+  // 先初始化联机同步（注册消息处理器，确保不丢失快照）
+  if (GS.mode === 'multiplayer' && SyncManager) {
+    SyncManager.initMultiplayerMode();
+  }
+  // 再初始化场景（场景中会设置 window.scene 等供同步模块使用）
   initScene();
+
+  // 主机端：为所有已连接的加入者创建远程玩家 3D 模型
+  if (GS.mode === 'multiplayer' && GS.isHost && PeerManager && PeerManager.connected) {
+    console.log('[Game] init: 主机模式，创建远程玩家模型');
+    var playerList = PeerManager.getPlayerList();
+    playerList.forEach(function (p) {
+      if (p.id !== PeerManager.playerId) {
+        // 延迟创建，确保场景就绪
+        setTimeout(function () {
+          SyncManager.createRemotePlayer(p.id, p.character || 'qike', p.name || '玩家');
+        }, 100);
+      }
+    });
+  }
+
+  // 加入者端：场景就绪后请求一次完整世界状态（定向发给房主）
+  if (GS.mode === 'multiplayer' && !GS.isHost && PeerManager && PeerManager.connected) {
+    console.log('[Game] init: 加入者模式，请求世界状态');
+    setTimeout(function () {
+      var _hid = (PeerManager.getHostId && PeerManager.getHostId()) || null;
+      if (_hid && _hid !== PeerManager.playerId) {
+        PeerManager.sendTo(_hid, 'world_state_request', {});
+      } else {
+        PeerManager.broadcast('world_state_request', {});
+      }
+    }, 500);
+  }
 }

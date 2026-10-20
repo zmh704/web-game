@@ -22,3 +22,13 @@ android/____/android/source/local.properties
 
 # APK files
 *.apk
+
+# 本地工具/临时文件
+.claude/
+.workbuddy/
+_mp_test*.js
+game.html.bak
+
+# Android 构建产物
+android/build/
+android/dist/

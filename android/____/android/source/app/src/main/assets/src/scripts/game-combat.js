@@ -1,4 +1,66 @@
 // ============================================================
+// 联机战斗辅助（主机权威结算）
+// ============================================================
+
+// 按 netId 在小怪/Boss 列表中查找怪物
+function findMonsterByNetId(netId) {
+  if (!netId) return null;
+  if (typeof monsters !== 'undefined') {
+    for (var i = 0; i < monsters.length; i++) {
+      if (monsters[i] && monsters[i].userData && monsters[i].userData.netId === netId) return monsters[i];
+    }
+  }
+  if (typeof bosses !== 'undefined') {
+    for (var j = 0; j < bosses.length; j++) {
+      if (bosses[j] && bosses[j].userData && bosses[j].userData.netId === netId) return bosses[j];
+    }
+  }
+  return null;
+}
+
+// 对怪物造成伤害：加入者上报主机由主机权威结算，主机/单机本地结算。
+// 返回 true 表示本地已确认击杀（仅主机/单机会返回 true，加入者恒为 false）。
+function dealMonsterDamage(m, dealt, isChaser) {
+  if (!m || !m.userData) return false;
+  if (GS.mode === 'multiplayer' && !GS.isHost) {
+    // 加入者：把伤害上报给主机，由主机权威扣血/判定死亡，本地不改 HP、不击杀
+    if (typeof PeerManager !== 'undefined') {
+      PeerManager.broadcast('monster_damage', {
+        netId: m.userData.netId || null,
+        dmg: dealt,
+        isChaser: !!isChaser
+      });
+    }
+    return false;
+  }
+  // 主机 / 单机：本地权威结算
+  m.userData.hp -= dealt;
+  return m.userData.hp <= 0;
+}
+
+// 返回距离 fromPos 最近的玩家位置（联机主机端把加入者也纳入目标）
+function nearestPlayerPos(fromPos) {
+  if (!player) return fromPos;
+  var best = player.position;
+  if (GS.mode === 'multiplayer' && GS.isHost && typeof PeerManager !== 'undefined') {
+    var bestD = fromPos.distanceTo(player.position);
+    for (var pid in PeerManager.players) {
+      if (pid === PeerManager.playerId) continue;
+      var pp = PeerManager.players[pid];
+      if (pp && pp.position) {
+        var dx = fromPos.x - pp.position.x, dz = fromPos.z - pp.position.z;
+        var d = Math.sqrt(dx * dx + dz * dz);
+        if (d < bestD) {
+          bestD = d;
+          best = new THREE.Vector3(pp.position.x, player.position.y, pp.position.z);
+        }
+      }
+    }
+  }
+  return best;
+}
+
+// ============================================================
 // 技能系统
 // ============================================================
 function useSkill() {
@@ -317,8 +379,11 @@ function attack() {
   dir.applyQuaternion(camera.quaternion);
   dir.y = 0; dir.normalize();
 
-  // 辅助瞄准：寻找最近且与玩家方向接近的活跃怪物
+  // 辅助瞄准：寻找最近且与玩家方向接近的活跃怪物（含追捕者）
   var allActiveMonsters = monsters.concat(bosses);
+  if (typeof chaserMonster !== 'undefined' && chaserMonster && chaserMonster.parent && chaserMonster.userData.active) {
+    allActiveMonsters.push(chaserMonster);
+  }
   var closestMon = null, closestDot = -1;
   allActiveMonsters.forEach(function (m) {
     if (!m.userData.active) return;
@@ -433,8 +498,8 @@ function monsterHitDamage(m) {
   var totalDef = Math.min((GS.defBonus || 0) + (GS.levelDefBonus || 0), caps.defCap);
   var defRatio = caps.defCap > 0 ? Math.min(1, totalDef / caps.defCap) : 0;
   var isBoss = m && m.userData && m.userData.isBoss;
-  // 击杀所需次数：Boss 2~3次，小怪 4~5次（防御越高次数越多，附带随机浮动）
-  var hits = isBoss ? (2 + defRatio) : (4 + defRatio);
+  // 击杀所需次数：Boss 3~4次，小怪 5~7次（防御越高次数越多，附带随机浮动）
+  var hits = isBoss ? (3 + defRatio) : (5 + defRatio * 2);
   hits -= Math.random() * 0.35; // 随机浮动（只会让伤害略高，保证不超过上限次数）
   hits = Math.max(1.5, hits);
   return Math.ceil(maxHp / hits);
@@ -450,6 +515,10 @@ function useBindingRope(w) {
   dir.y = 0; dir.normalize();
 
   var allActive = monsters.concat(bosses);
+  // 追捕者也可被捆仙绳束缚
+  if (typeof chaserMonster !== 'undefined' && chaserMonster && chaserMonster.parent && chaserMonster.userData.active) {
+    allActive.push(chaserMonster);
+  }
   var target = null, bestDot = 0.2; // 只要求大致朝向即可（100%精准锁定）
   allActive.forEach(function (m) {
     if (!m.userData.active || m.userData.boundTimer > 0) return;
@@ -568,9 +637,12 @@ function stickMeleeAttack(w) {
     }
   }, 16);
 
-  // === 命中判定：前方较大范围 ===
+  // === 命中判定：前方较大范围（含追捕者）===
   var MELEE_RANGE = 5.0;
   var allActive = monsters.concat(bosses);
+  if (typeof chaserMonster !== 'undefined' && chaserMonster && chaserMonster.parent && chaserMonster.userData.active) {
+    allActive.push(chaserMonster);
+  }
   var target = null, bestDot = 0.15;
   allActive.forEach(function (m) {
     if (!m.userData.active) return;
@@ -597,8 +669,19 @@ function stickMeleeAttack(w) {
   var perHitCap = Math.ceil((target.userData.type.hp || 100) / (minHits + Math.random() * 2));
   var dealt = Math.max(1, Math.min(Math.round(dmg), perHitCap));
 
-  target.userData.hp -= dealt;
+  var _isChaserTarget = (typeof chaserMonster !== 'undefined' && target === chaserMonster);
+  var _meleeKilled = dealMonsterDamage(target, dealt, _isChaserTarget);
   target.userData.lastAttackedTime = clock.elapsedTime;
+  target.userData.hitFlash = 0.25;
+  // 木棍命中：小怪明显击退+硬直，近战风险的回报
+  target.userData.staggerTimer = Math.max(target.userData.staggerTimer || 0, target.userData.isBoss ? 0.15 : 0.35);
+  if (!target.userData.isBoss) {
+    var kbDir = new THREE.Vector3().subVectors(target.position, player.position);
+    kbDir.y = 0;
+    if (kbDir.lengthSq() > 0.0001) {
+      target.position.add(kbDir.normalize().multiplyScalar(1.2));
+    }
+  }
   monsterHitFlash = 0.2;
   AudioMgr.playHit();
   showMessage('🪵 敲打! -' + dealt, 0xccaa66);
@@ -645,7 +728,7 @@ function stickMeleeAttack(w) {
     }
   }
 
-  if (target.userData.hp <= 0) {
+  if (_meleeKilled) {
     onMonsterDefeated(target);
   }
   updateHUD();
@@ -655,6 +738,7 @@ function monsterAttack(m) {
   if (GS.gameOver || !GS.running) return;
   if (!m || !m.userData || !m.userData.active) return;
   if (m.userData.boundTimer > 0) return; // 被捆仙绳束缚，无法攻击
+  if (m.userData.staggerTimer > 0) return; // 受击硬直中，无法攻击
   if (m.userData.sleeping) return; // Boss睡眠中不会主动攻击
   // 每只怪物独立攻击冷却（不再共用全局冷却）
   if (m.userData.attackCooldown > 0) return;
@@ -664,7 +748,7 @@ function monsterAttack(m) {
   var dir = new THREE.Vector3().subVectors(player.position, m.position);
   var dist = dir.length();
   if (dist < 3.5 * (t.scale || 1)) {
-    // 伤害按"击杀所需次数"计算（Boss最多3次，小怪最多5次，防御已计入）
+    // 伤害按"击杀所需次数"计算（Boss最少3次，小怪最少5次，防御已计入）
     var dmg = monsterHitDamage(m);
     if (GS._shielded) {
       dmg = Math.ceil(dmg * 0.1);

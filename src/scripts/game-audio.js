@@ -11,17 +11,16 @@ var AudioMgr = {
   useRealAudio: true,
 
   // 音频文件映射
+  //
+  // 只登记 src/assets/audio/ 里**真实存在**的文件。
+  // 之前这里列了 10 个，实际只有 4 个（attack / bgm / growl / scream），
+  // 剩下的 6 个每次加载都发一个 404 —— 控制台一片红，加载也白等一轮网络超时。
+  // 没有真实文件的音效直接走程序化合成（下面的 fallback），体验不受影响。
   audioFiles: {
     bgm: 'background_music.mp3',
     growl: 'growl.mp3',
     scream: 'scream.mp3',
-    attack: 'attack.mp3',
-    hit: 'hit.mp3',
-    hurt: 'hurt.mp3',
-    skill: 'skill.mp3',
-    quiz: 'quiz.mp3',
-    whisper: 'whisper.mp3',
-    scratch: 'scratch.mp3'
+    attack: 'attack.mp3'
   },
 
   init: function () {
@@ -523,20 +522,23 @@ var AudioMgr = {
 
   // 角色配音快捷方法
   playCharacterVoice: function (action) {
-    var isQike = (typeof GS !== 'undefined') ? GS.character === 'qike' : true;
+    // 三个角色各自的台词和音高。别再用 isQike 三元表达式 ——
+    // 那是二选一，加第三个角色时必然漏改（会把爸爸的台词读成妙妙的）。
+    var cid = (typeof GS !== 'undefined' && GS.character) ? GS.character : 'qike';
+    var PITCH = { qike: 1.0, miaomiao: 1.35, baba: 0.78 };
     var voiceConfig = {
-      attack: { qike: '看我的', miaomiao: '呀！', rate: 1.2, pitch: isQike ? 1.0 : 1.4 },
-      skill: { qike: '疾风冲刺', miaomiao: '能量护盾', rate: 1.1, pitch: isQike ? 1.1 : 1.3 },
-      hurt: { qike: '哎哟', miaomiao: '啊', rate: 1.3, pitch: isQike ? 0.9 : 1.5 },
-      victory: { qike: '我们赢了', miaomiao: '太棒了', rate: 1.0, pitch: isQike ? 1.0 : 1.3 },
-      defeat: { qike: '失败了...', miaomiao: '没关系，再来', rate: 0.9, pitch: isQike ? 0.8 : 1.2 },
-      quiz: { qike: '这个问题难不倒我', miaomiao: '让我想想', rate: 1.1, pitch: isQike ? 1.0 : 1.3 },
-      escape: { qike: '快上飞船！', miaomiao: '得救了', rate: 1.2, pitch: isQike ? 1.1 : 1.3 }
+      attack: { qike: '看我的', miaomiao: '呀！', baba: '嘿，看这边', rate: 1.2 },
+      skill: { qike: '疾风冲刺', miaomiao: '能量护盾', baba: '起飞咯', rate: 1.1 },
+      hurt: { qike: '哎哟', miaomiao: '啊', baba: '哎哟喂', rate: 1.3 },
+      victory: { qike: '我们赢了', miaomiao: '太棒了', baba: '干得漂亮', rate: 1.0 },
+      defeat: { qike: '失败了...', miaomiao: '没关系，再来', baba: '没事，爸爸在呢', rate: 0.9 },
+      quiz: { qike: '这个问题难不倒我', miaomiao: '让我想想', baba: '这题我会', rate: 1.1 },
+      escape: { qike: '快上飞船！', miaomiao: '得救了', baba: '快上来，孩子们', rate: 1.2 }
     };
     var cfg = voiceConfig[action];
     if (cfg) {
-      var text = isQike ? cfg.qike : cfg.miaomiao;
-      this.speak(text, cfg.rate, cfg.pitch);
+      var text = cfg[cid] || cfg.qike;
+      this.speak(text, cfg.rate, PITCH[cid] || 1.0);
     }
   }
 };

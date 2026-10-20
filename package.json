@@ -1,0 +1,25 @@
+{
+  "name": "web-game",
+  "version": "1.0.0",
+  "description": "",
+  "main": "simple-server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zmh704/web-game.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/zmh704/web-game/issues"
+  },
+  "homepage": "https://github.com/zmh704/web-game#readme",
+  "dependencies": {
+    "playwright": "^1.61.1",
+    "ws": "^8.21.1"
+  }
+}

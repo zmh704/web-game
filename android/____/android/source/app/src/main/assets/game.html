@@ -24,6 +24,9 @@
   <div id="char-select">
     <h1>🌟 奇妙冒险记</h1>
     <div class="subtitle">选择你的冒险伙伴</div>
+    <div class="multiplayer-entry">
+      <button class="mp-btn" onclick="showMultiplayerLobby()">📡 联机模式 (2-4人)</button>
+    </div>
     <div class="char-grid">
       <div class="char-card char-qike" onclick="selectCharacter('qike')">
         <div class="avatar"><canvas id="avatar-qike" width="120" height="140"></canvas></div>
@@ -77,6 +80,124 @@
     <div class="chapter-grid" id="chapter-grid"></div>
   </div>
 
+  <!-- 联机大厅 -->
+  <div id="multiplayer-lobby" class="hidden">
+    <button class="back-btn" onclick="backToMultiplayerLobby()">← 返回</button>
+    <h1>📡 联机模式</h1>
+    <div class="subtitle">2-4人一起冒险！确保所有手机连接同一WiFi</div>
+    <div class="mp-lobby-content">
+      <div class="mp-name-input">
+        <label>你的昵称：</label>
+        <input type="text" id="multiplayer-name-input" placeholder="输入昵称..." maxlength="8" value="冒险家">
+      </div>
+      <!-- 创建房间加载提示 -->
+      <div id="mp-creating" class="hidden">
+        <div class="mp-creating-spinner"></div>
+        <div class="mp-creating-text" id="mp-creating-text">正在创建房间...</div>
+        <div class="mp-creating-error" id="mp-creating-error" style="display:none"></div>
+        <button class="mp-creating-cancel" id="mp-creating-cancel" style="display:none">取消</button>
+      </div>
+      <div class="mp-actions">
+        <button class="mp-action-card" onclick="createRoom()" type="button">
+          <div class="mp-icon">🏠</div>
+          <div class="mp-label">创建房间</div>
+          <div class="mp-desc">成为主机，邀请好友加入</div>
+        </button>
+        <button class="mp-action-card" onclick="showJoinRoom()" type="button">
+          <div class="mp-icon">🚪</div>
+          <div class="mp-label">加入房间</div>
+          <div class="mp-desc">输入房间码，加入好友</div>
+        </button>
+      </div>
+      <!-- 服务器地址设置 -->
+      <div class="mp-server-input">
+        <label>服务器地址：</label>
+        <input type="text" id="multiplayer-server-input" placeholder="默认: 本机IP:3000" value="">
+        <div class="mp-server-hint">📡 联机需要先启动服务器(node server.js)，然后输入电脑IP地址</div>
+      </div>
+      <div id="join-room-form" class="hidden">
+        <label>房间码：</label>
+        <div class="room-code-input-wrap">
+          <input type="text" id="room-code-input" placeholder="输入4位数字" maxlength="4" class="room-code-input" autocomplete="off" inputmode="numeric" pattern="[0-9]*">
+          <button class="mp-btn-small" onclick="joinRoom()" type="button">加入</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 房间等待界面 -->
+  <div id="room-lobby" class="hidden">
+    <button class="back-btn" onclick="leaveRoom()">← 离开</button>
+    <div class="rl-header">
+      <div class="room-code-label">房间码</div>
+      <div class="room-code-big" id="room-code-display">------</div>
+      <div class="room-code-hint">分享房间码给好友，在联机模式中点击"加入房间"</div>
+    </div>
+
+    <!-- 章节/难度选择（仅主机可见） -->
+    <div class="rl-settings" id="rl-settings">
+      <div class="rl-settings-row">
+        <div class="rl-setting-label">难度：</div>
+        <div class="rl-setting-options">
+          <div class="rl-setting-opt" data-diff="easy" onclick="selectMPDifficulty('easy')">🌱 初级</div>
+          <div class="rl-setting-opt" data-diff="medium" onclick="selectMPDifficulty('medium')">🌿 中级</div>
+          <div class="rl-setting-opt" data-diff="hard" onclick="selectMPDifficulty('hard')">🌳 高级</div>
+        </div>
+      </div>
+      <div class="rl-settings-row">
+        <div class="rl-setting-label">章节：</div>
+        <div class="rl-setting-options" id="rl-chapter-options">
+          <div class="rl-setting-opt rl-setting-opt-ch" data-ch="1" onclick="selectMPChapter(1)">第1章</div>
+          <div class="rl-setting-opt rl-setting-opt-ch" data-ch="2" onclick="selectMPChapter(2)">第2章</div>
+          <div class="rl-setting-opt rl-setting-opt-ch" data-ch="3" onclick="selectMPChapter(3)">第3章</div>
+          <div class="rl-setting-opt rl-setting-opt-ch" data-ch="4" onclick="selectMPChapter(4)">第4章</div>
+          <div class="rl-setting-opt rl-setting-opt-ch" data-ch="5" onclick="selectMPChapter(5)">第5章</div>
+        </div>
+      </div>
+      <div class="rl-settings-desc" id="rl-settings-desc">🌱 初级 · 第1章</div>
+    </div>
+
+    <!-- 3 个角色位 -->
+    <div class="rl-slots" id="rl-slots">
+      <div class="rl-slot rl-slot-empty" data-slot="0">
+        <div class="slot-avatar">❓</div>
+        <div class="slot-name">等待加入...</div>
+        <div class="slot-status"></div>
+      </div>
+      <div class="rl-slot rl-slot-empty" data-slot="1">
+        <div class="slot-avatar">❓</div>
+        <div class="slot-name">等待加入...</div>
+        <div class="slot-status"></div>
+      </div>
+      <div class="rl-slot rl-slot-empty" data-slot="2">
+        <div class="slot-avatar">❓</div>
+        <div class="slot-name">等待加入...</div>
+        <div class="slot-status"></div>
+      </div>
+    </div>
+
+    <!-- 角色选择（主机/加入者都显示） -->
+    <div class="rl-char-select" id="rl-char-select">
+      <div class="rl-char-label">选择角色：</div>
+      <div class="rl-char-options">
+        <div class="rl-char-option" data-char="qike" onclick="selectCharSlot('qike')">
+          <canvas id="slot-avatar-qike" width="60" height="70"></canvas>
+          <div class="rl-char-name">奇奇 👦</div>
+        </div>
+        <div class="rl-char-option" data-char="miaomiao" onclick="selectCharSlot('miaomiao')">
+          <canvas id="slot-avatar-miaomiao" width="60" height="70"></canvas>
+          <div class="rl-char-name">妙妙 👧</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 操作按钮 -->
+    <div class="rl-actions">
+      <button class="mp-btn" id="ready-btn" onclick="toggleReady()">✅ 准备</button>
+      <button class="mp-btn mp-btn-start hidden" id="start-btn" onclick="startMultiplayerGame()">🚀 开始游戏</button>
+    </div>
+  </div>
+
   <!-- 游戏 HUD (默认隐藏，游戏开始时显示) -->
   <div id="hud" class="hidden">
     <div id="hud-left">
@@ -100,8 +221,14 @@
         <div class="value" id="char-name">奇奇</div>
         <div class="level-text" id="level-text">Lv.1</div>
       </div>
+      <!-- 联机玩家列表 -->
+      <div id="mp-player-list" class="hidden hud-item">
+        <div class="label">👥 队友</div>
+        <div id="mp-player-list-content"></div>
+      </div>
     </div>
     <div id="hud-right">
+      <div id="connection-status" class="hidden" title="连接状态">📡</div>
       <button class="back-btn" onclick="backToMainMenu()" id="hud-back-btn" title="退出游戏">← 退出</button>
     </div>
   </div>
@@ -162,6 +289,9 @@
     </div>
   </div>
 
+  <!-- 受击红晕层 -->
+  <div id="hit-vignette"></div>
+
   <!-- 音频元素 -->
   <audio id="bgm" loop>
     <source src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=" type="audio/wav">
@@ -207,6 +337,28 @@
       opacity: 0;
       pointer-events: none;
     }
+
+    /* 受击红晕（覆盖在画布上，不响应点击） */
+    #hit-vignette {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 50;
+      opacity: 0;
+      background: radial-gradient(ellipse at center, transparent 40%, rgba(255, 0, 0, 0.45) 100%);
+    }
+
+    /* 被抓时的持续危险边缘脉动 */
+    #hit-vignette.captured {
+      opacity: 1;
+      animation: capture-pulse 1s ease-in-out infinite;
+      background: radial-gradient(ellipse at center, transparent 55%, rgba(160, 0, 200, 0.35) 100%);
+    }
+
+    @keyframes capture-pulse {
+      0%, 100% { opacity: 0.5; }
+      50% { opacity: 1; }
+    }
   </style>
 
   <!-- Three.js -->
@@ -229,14 +381,32 @@
 
   <!-- 答题系统 -->
   <script src="src/scripts/game-quiz.js"></script>
+
   <!-- 攻击和技能系统 -->
   <script src="src/scripts/game-combat.js"></script>
 
-  <!-- 触摸控制 -->
+  <!-- 触屏控制 -->
   <script src="src/scripts/game-touch.js"></script>
+
+  <!-- 网络模块（联机 - WebSocket 连接本地服务器） -->
+  <script src="src/scripts/game-network.js"></script>
+
+  <!-- 同步模块（联机） -->
+  <script src="src/scripts/game-sync.js"></script>
 
   <!-- 主入口和更新循环 -->
   <script src="src/scripts/game-main.js"></script>
+
+  <!-- 系统模块 -->
+  <script src="src/systems/RoomSystem.js"></script>
+  <script src="src/systems/ItemSystem.js"></script>
+  <script src="src/systems/MonsterSystem.js"></script>
+  <script src="src/systems/ChaserSystem.js"></script>
+  <script src="src/systems/FlashlightSystem.js"></script>
+  <script src="src/systems/EscapeSystem.js"></script>
+  <script src="src/systems/MinimapSystem.js"></script>
+  <script src="src/systems/JumpSystem.js"></script>
+  <script src="src/systems/WeaponBar.js"></script>
 
   <!-- Three.js场景建造（依赖main中的animate） -->
   <script src="src/scripts/game-scene.js"></script>
@@ -248,6 +418,59 @@
     // 绘制角色头像: 奇奇(男孩) / 妙妙(女孩)
     drawAvatar('avatar-qike', 'boy', '#ff8800', '#ff6600');
     drawAvatar('avatar-miaomiao', 'girl', '#cc77ff', '#9944ff');
+    // 绘制小头像（用于房间角色选择）
+    drawAvatar('slot-avatar-qike', 'boy', '#ff8800', '#ff6600');
+    drawAvatar('slot-avatar-miaomiao', 'girl', '#cc77ff', '#9944ff');
+
+    // ============================================================
+    // 联机模式函数
+    // ============================================================
+    function showMultiplayerLobby() {
+      document.getElementById('char-select').classList.add('hidden');
+      document.getElementById('multiplayer-lobby').classList.remove('hidden');
+      document.getElementById('join-room-form').classList.add('hidden');
+      // 重置创建中状态（安全兜底）
+      var creating = document.getElementById('mp-creating');
+      if (creating) { creating.classList.add('hidden'); creating.style.display = 'none'; }
+      var actions = document.querySelector('.mp-actions');
+      if (actions) actions.style.display = 'flex';
+    }
+
+    function backToMultiplayerLobby() {
+      document.getElementById('multiplayer-lobby').classList.add('hidden');
+      document.getElementById('char-select').classList.remove('hidden');
+    }
+
+    function showJoinRoom() {
+      document.getElementById('join-room-form').classList.remove('hidden');
+    }
+
+    // 联机模式难度/章节选择
+    function selectMPDifficulty(diff) {
+      selectedDiff = diff;
+      var opts = document.querySelectorAll('#rl-settings .rl-setting-opt[data-diff]');
+      opts.forEach(function (o) { o.classList.remove('selected'); });
+      var el = document.querySelector('#rl-settings .rl-setting-opt[data-diff="' + diff + '"]');
+      if (el) el.classList.add('selected');
+      updateMPSettingsDesc();
+    }
+
+    function selectMPChapter(ch) {
+      selectedChapter = ch;
+      var opts = document.querySelectorAll('#rl-settings .rl-setting-opt-ch');
+      opts.forEach(function (o) { o.classList.remove('selected'); });
+      var el = document.querySelector('#rl-settings .rl-setting-opt-ch[data-ch="' + ch + '"]');
+      if (el) el.classList.add('selected');
+      updateMPSettingsDesc();
+    }
+
+    function updateMPSettingsDesc() {
+      var diffNames = { easy: '🌱 初级', medium: '🌿 中级', hard: '🌳 高级' };
+      var el = document.getElementById('rl-settings-desc');
+      if (el) el.textContent = (diffNames[selectedDiff] || '🌱 初级') + ' · 第' + (selectedChapter || 1) + '章';
+    }
+
+    // 设置联机模式默认章节
 
     // 隐藏加载界面，显示角色选择
     document.getElementById('loading').style.display = 'none';

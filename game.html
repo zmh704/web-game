@@ -10,10 +10,18 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="奇妙冒险记" />
   <title>奇妙冒险记</title>
-  <link rel="stylesheet" href="src/styles/game.css" />
+  <link rel="stylesheet" href="src/styles/game.css?v=9" />
+  <!-- 服务器会把这里的端口替换成实际监听端口（见 server.js 的静态文件处理）。
+       前端推 WebSocket 地址时以它为准，避免页面经代理转发时 location.port 是代理端口。 -->
+  <script>window.__SERVER_PORT__ = 3000;
+  window.__UI_BUILD__ = "10-19u";</script>
 </head>
 
 <body>
+
+  <!-- 版本标记：用来一眼确认浏览器加载的是不是最新代码。
+       如果看不到这一行，说明拿到了缓存里的旧页面，需要强制刷新。 -->
+  <div class="build-tag">UI build 10-19x</div>
 
   <!-- 加载 -->
   <div id="loading">
@@ -24,6 +32,9 @@
   <div id="char-select">
     <h1>🌟 奇妙冒险记</h1>
     <div class="subtitle">选择你的冒险伙伴</div>
+    <div class="multiplayer-entry">
+      <button class="mp-btn" onclick="showMultiplayerLobby()">📡 联机模式 (2-3人)</button>
+    </div>
     <div class="char-grid">
       <div class="char-card char-qike" onclick="selectCharacter('qike')">
         <div class="avatar"><canvas id="avatar-qike" width="120" height="140"></canvas></div>
@@ -38,6 +49,13 @@
         <div class="tagline">聪明的小女孩发明家</div>
         <div class="skill-tag">🛡️ 能量护盾</div>
         <div class="skill-desc">答题或打怪攒能量，按Q释放护盾格挡伤害</div>
+      </div>
+      <div class="char-card char-baba" onclick="selectCharacter('baba')">
+        <div class="avatar"><canvas id="avatar-baba" width="120" height="140"></canvas></div>
+        <div class="name">爸爸 👨</div>
+        <div class="tagline">沉稳强壮的爸爸护林员</div>
+        <div class="skill-tag">🕊️ 飞行</div>
+        <div class="skill-desc">答题或打怪攒能量，按Q起飞悬停3秒；按住跳跃键继续爬升，地面怪物够不着你</div>
       </div>
     </div>
   </div>
@@ -77,38 +95,193 @@
     <div class="chapter-grid" id="chapter-grid"></div>
   </div>
 
+  <!-- 联机大厅 -->
+  <div id="multiplayer-lobby" class="hidden">
+    <button class="back-btn" onclick="backToMultiplayerLobby()">← 返回</button>
+    <h1>📡 联机模式</h1>
+    <div class="subtitle">2-3 人一起冒险 · 同一 WiFi 就能玩</div>
+
+    <div class="mp-lobby-content">
+      <!-- 1. 昵称（进场自动随机一个，点骰子换一个） -->
+      <div class="mp-name-input">
+        <label>你的昵称</label>
+        <div class="mp-name-row">
+          <input type="text" id="multiplayer-name-input" placeholder="输入昵称..." maxlength="8">
+          <button type="button" class="mp-name-roll" onclick="rollNickname()" title="换一个随机昵称">🎲</button>
+        </div>
+      </div>
+
+      <!-- 2. 创建中状态（点创建房间后出现） -->
+      <div id="mp-creating" class="hidden">
+        <div class="mp-creating-spinner"></div>
+        <div class="mp-creating-text" id="mp-creating-text">正在创建房间…</div>
+        <div class="mp-creating-error" id="mp-creating-error" style="display:none"></div>
+        <button class="mp-creating-cancel" id="mp-creating-cancel" style="display:none">取消</button>
+      </div>
+
+      <!-- 3. 主操作：创建 / 加入 -->
+      <div class="mp-actions">
+        <button class="mp-action-card" onclick="createRoom()" type="button">
+          <div class="mp-icon">🏠</div>
+          <div class="mp-label">创建房间</div>
+          <div class="mp-desc">好友输入房间码即可加入</div>
+        </button>
+        <button class="mp-action-card" onclick="showJoinRoom()" type="button">
+          <div class="mp-icon">🚪</div>
+          <div class="mp-label">加入房间</div>
+          <div class="mp-desc">只需 4 位房间码</div>
+        </button>
+      </div>
+
+      <!-- 4. 加入表单（点了「加入房间」才展开） -->
+      <div id="join-room-form" class="hidden">
+        <label>房间码</label>
+        <div class="room-code-input-wrap">
+          <input type="text" id="room-code-input" placeholder="0000" maxlength="4" class="room-code-input" autocomplete="off" inputmode="numeric" pattern="[0-9]*">
+          <button class="mp-btn-small" onclick="joinRoom()" type="button">加入</button>
+        </div>
+        <div class="mp-join-status" id="mp-join-status"></div>
+      </div>
+
+      <!-- 5. 高级选项：技术细节收进去，别打扰普通用户 -->
+      <details class="mp-advanced">
+        <summary>高级选项</summary>
+        <div class="mp-advanced-body">
+          <div class="mp-server-input">
+            <label>服务器地址（一般不用填）</label>
+            <input type="text" id="multiplayer-server-input" placeholder="留空则自动查找" value="">
+          </div>
+          <div class="mp-diag" id="mp-diag">正在检测…</div>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <!-- 房间等待界面：左=选择角色 / 中=房间码+玩家+开始 / 右=难度+章节，一屏放下 -->
+  <div id="room-lobby" class="hidden">
+    <button class="back-btn" onclick="leaveRoom()">← 离开</button>
+
+    <div class="rl-panel">
+
+      <!-- 左栏：选择角色 -->
+      <section class="rl-col rl-col-left">
+        <div class="rl-col-title">选择角色</div>
+        <div class="rl-char-options" id="rl-char-select">
+          <div class="rl-char-option" data-char="qike" onclick="selectCharSlot('qike')">
+            <canvas id="slot-avatar-qike" width="60" height="70"></canvas>
+            <div class="rl-char-name">奇奇 👦</div>
+          </div>
+          <div class="rl-char-option" data-char="miaomiao" onclick="selectCharSlot('miaomiao')">
+            <canvas id="slot-avatar-miaomiao" width="60" height="70"></canvas>
+            <div class="rl-char-name">妙妙 👧</div>
+          </div>
+          <div class="rl-char-option" data-char="baba" onclick="selectCharSlot('baba')">
+            <canvas id="slot-avatar-baba" width="60" height="70"></canvas>
+            <div class="rl-char-name">爸爸 👨</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 中栏：房间码 + 玩家位 + 开始按钮 -->
+      <section class="rl-col rl-col-mid">
+        <div class="rl-header">
+          <div class="room-code-label">房间码</div>
+          <div class="room-code-big" id="room-code-display">------</div>
+          <div class="room-code-hint">分享房间码给好友，在联机模式点击"加入房间"</div>
+        </div>
+
+        <div class="rl-slots" id="rl-slots">
+          <div class="rl-slot rl-slot-empty" data-slot="0">
+            <div class="slot-avatar">❓</div>
+            <div class="slot-name">等待加入...</div>
+            <div class="slot-status"></div>
+          </div>
+          <div class="rl-slot rl-slot-empty" data-slot="1">
+            <div class="slot-avatar">❓</div>
+            <div class="slot-name">等待加入...</div>
+            <div class="slot-status"></div>
+          </div>
+          <div class="rl-slot rl-slot-empty" data-slot="2">
+            <div class="slot-avatar">❓</div>
+            <div class="slot-name">等待加入...</div>
+            <div class="slot-status"></div>
+          </div>
+        </div>
+
+        <div class="rl-actions">
+          <button class="mp-btn" id="ready-btn" onclick="toggleReady()">✅ 准备</button>
+          <button class="mp-btn mp-btn-start hidden" id="start-btn" onclick="startMultiplayerGame()">🚀 开始游戏</button>
+        </div>
+      </section>
+
+      <!-- 右栏：难度 + 章节（仅房主可改） -->
+      <section class="rl-col rl-col-right" id="rl-settings">
+        <div class="rl-col-title">难度</div>
+        <div class="rl-setting-options rl-opt-diff">
+          <div class="rl-setting-opt" data-diff="easy" onclick="selectMPDifficulty('easy')">🌱 初级</div>
+          <div class="rl-setting-opt" data-diff="medium" onclick="selectMPDifficulty('medium')">🌿 中级</div>
+          <div class="rl-setting-opt" data-diff="hard" onclick="selectMPDifficulty('hard')">🌳 高级</div>
+        </div>
+
+        <div class="rl-col-title rl-col-title-gap">章节</div>
+        <div class="rl-setting-options rl-opt-ch" id="rl-chapter-options">
+          <div class="rl-setting-opt rl-setting-opt-ch" data-ch="1" onclick="selectMPChapter(1)">第1章</div>
+          <div class="rl-setting-opt rl-setting-opt-ch" data-ch="2" onclick="selectMPChapter(2)">第2章</div>
+          <div class="rl-setting-opt rl-setting-opt-ch" data-ch="3" onclick="selectMPChapter(3)">第3章</div>
+          <div class="rl-setting-opt rl-setting-opt-ch" data-ch="4" onclick="selectMPChapter(4)">第4章</div>
+          <div class="rl-setting-opt rl-setting-opt-ch" data-ch="5" onclick="selectMPChapter(5)">第5章</div>
+        </div>
+
+        <div class="rl-settings-desc" id="rl-settings-desc">🌿 中级 · 第3章</div>
+      </section>
+
+    </div>
+  </div>
+
   <!-- 游戏 HUD (默认隐藏，游戏开始时显示) -->
   <div id="hud" class="hidden">
     <div id="hud-left">
-      <div class="hud-item">
-        <div class="label">❤️ 生命</div>
-        <div class="value" id="hp-text">100</div>
-        <div class="hp-bar">
-          <div class="hp-fill" id="hp-fill" style="width:100%"></div>
+      <!-- 角色 + 生命合并成一张卡：上行角色名/等级，下行血条 + 血量 -->
+      <div class="hud-item hud-hero">
+        <div class="hud-row">
+          <span class="value" id="char-name">奇奇</span>
+          <span class="level-text" id="level-text">Lv.1</span>
+        </div>
+        <div class="hud-row">
+          <span class="hero-heart">❤</span>
+          <div class="hp-bar">
+            <div class="hp-fill" id="hp-fill" style="width:100%"></div>
+          </div>
+          <span class="value value-hp" id="hp-text">100</span>
         </div>
       </div>
-      <div class="hud-item">
-        <div class="label">🔋 能量</div>
-        <div class="value" id="energy-text" style="color:#66ffcc">0/5</div>
-        <div class="energy-bar">
-          <div class="energy-fill" id="energy-fill" style="width:0%"></div>
+      <div class="hud-item hud-energy">
+        <div class="hud-row">
+          <span class="label">能量</span>
+          <span class="value value-mint" id="energy-text">0/5</span>
+          <span class="energy-sub" id="energy-sub">碎片 0/2</span>
         </div>
-        <div class="energy-sub" id="energy-sub">🔹 碎片: 0/2</div>
+        <div class="hud-row">
+          <div class="energy-bar">
+            <div class="energy-fill" id="energy-fill" style="width:0%"></div>
+          </div>
+        </div>
       </div>
-      <div class="hud-item">
-        <div class="label">🎯 角色</div>
-        <div class="value" id="char-name">奇奇</div>
-        <div class="level-text" id="level-text">Lv.1</div>
+      <!-- 联机玩家列表 -->
+      <div id="mp-player-list" class="hidden hud-item">
+        <div class="label">队友</div>
+        <div id="mp-player-list-content"></div>
       </div>
     </div>
     <div id="hud-right">
+      <div id="connection-status" class="hidden" title="连接状态">📡</div>
       <button class="back-btn" onclick="backToMainMenu()" id="hud-back-btn" title="退出游戏">← 退出</button>
     </div>
   </div>
 
   <!-- 技能状态栏 -->
   <div id="skill-bar">
-    <div class="skill-label">✨ 技能</div>
+    <div class="skill-label">技能</div>
     <div class="skill-status" id="skill-status">就绪</div>
     <div class="skill-cd-bar" id="skill-cd-bar">
       <div class="skill-cd-fill" id="skill-cd-fill" style="width:100%"></div>
@@ -117,7 +290,7 @@
   </div>
 
   <div id="buff-bar">
-    <div class="buff-label">✨ 增益</div>
+    <div class="buff-label">增益</div>
     <div class="buff-icons" id="buff-icons"></div>
   </div>
 
@@ -132,9 +305,35 @@
     <div id="weapon-bar"></div>
   </div>
 
+  <!-- 联机倒地观战面板：自己倒下时显示，等队友来救 -->
+  <div id="spectate-hud" class="hidden">
+    <div class="spec-title">💀 你倒下了</div>
+    <div class="spec-sub">可以慢慢爬行 · 队友靠近 3 秒就能救起你</div>
+    <div class="spec-track"><div class="spec-fill" id="spec-revive-fill" style="width:0%"></div></div>
+    <div class="spec-pct">救援进度 <span id="spec-revive-pct">0%</span></div>
+  </div>
+
+  <!-- 救援队友进度：站在倒地队友身边时显示 -->
+  <div id="revive-hud" class="hidden">
+    <div class="revive-text" id="revive-text">正在救援队友…</div>
+    <div class="revive-track"><div class="revive-fill" id="revive-fill" style="width:0%"></div></div>
+  </div>
+
+  <!-- 宝箱开启进度：靠近并停留一段时间才开箱，避免跑过时被强制弹题 -->
+  <div id="chest-progress" class="hidden">
+    <div class="cp-icon">📦</div>
+    <div class="cp-body">
+      <div class="cp-label">正在开启宝箱…</div>
+      <div class="cp-track">
+        <div class="cp-fill"></div>
+      </div>
+    </div>
+  </div>
+
   <div id="message"></div>
 
-  <div id="minimap"><canvas id="minimap-canvas" width="120" height="120"></canvas></div>
+  <!-- 画布按 2 倍分辨率出图：小地图放大到 128px 后线条和文字才不会糊 -->
+  <div id="minimap"><canvas id="minimap-canvas" width="240" height="240"></canvas></div>
 
   <!-- 移动端触屏控制层 -->
   <div id="touch-controls">
@@ -161,6 +360,9 @@
       <div class="capture-bar-count" id="capture-bar-count">0/10</div>
     </div>
   </div>
+
+  <!-- 受击红晕层 -->
+  <div id="hit-vignette"></div>
 
   <!-- 音频元素 -->
   <audio id="bgm" loop>
@@ -202,15 +404,47 @@
   </script>
 
   <style>
-    /* 让 #hud 支持 hidden 类 */
+    /* 让 #hud 支持 hidden 类。
+       必须 display:none：光靠 opacity 的话，HUD 里 #hud-back-btn 自己写了
+       pointer-events:auto，会在菜单界面留下一个看不见但能点的"退出"按钮。 */
     #hud.hidden {
+      display: none;
       opacity: 0;
       pointer-events: none;
+    }
+
+    /* 受击红晕（覆盖在画布上，不响应点击） */
+    #hit-vignette {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 50;
+      opacity: 0;
+      background: radial-gradient(ellipse at center, transparent 40%, rgba(255, 0, 0, 0.45) 100%);
+    }
+
+    /* 被抓时的持续危险边缘脉动 */
+    #hit-vignette.captured {
+      opacity: 1;
+      animation: capture-pulse 1s ease-in-out infinite;
+      background: radial-gradient(ellipse at center, transparent 55%, rgba(160, 0, 200, 0.35) 100%);
+    }
+
+    @keyframes capture-pulse {
+      0%, 100% { opacity: 0.5; }
+      50% { opacity: 1; }
     }
   </style>
 
   <!-- Three.js -->
   <script src="src/assets/three.min.js"></script>
+
+  <!-- 视觉基础层：调色板 / 造型 / 材质贴图 / 动画工具 / 战斗特效 -->
+  <script src="src/visual/palette.js"></script>
+  <script src="src/visual/shapes.js"></script>
+  <script src="src/visual/materials.js"></script>
+  <script src="src/visual/anim.js"></script>
+  <script src="src/visual/vfx.js"></script>
 
   <!-- 游戏数据 -->
   <script src="src/scripts/game-data.js"></script>
@@ -229,14 +463,36 @@
 
   <!-- 答题系统 -->
   <script src="src/scripts/game-quiz.js"></script>
+
   <!-- 攻击和技能系统 -->
   <script src="src/scripts/game-combat.js"></script>
 
-  <!-- 触摸控制 -->
+  <!-- 触屏控制 -->
   <script src="src/scripts/game-touch.js"></script>
+
+  <!-- 网络模块（联机 - WebSocket 连接本地服务器） -->
+  <script src="src/scripts/game-network.js"></script>
+
+  <!-- 同步模块（联机） -->
+  <script src="src/scripts/game-sync.js"></script>
 
   <!-- 主入口和更新循环 -->
   <script src="src/scripts/game-main.js"></script>
+
+  <!-- 系统模块 -->
+  <!-- NightSystem 必须排在 RoomSystem 之前：buildRoom 要用它的雾距/夜空配置 -->
+  <script src="src/systems/CollisionSystem.js"></script>
+  <script src="src/systems/NightSystem.js"></script>
+  <script src="src/systems/RoomSystem.js"></script>
+  <script src="src/systems/ItemSystem.js"></script>
+  <script src="src/systems/MonsterSystem.js"></script>
+  <script src="src/systems/ChaserSystem.js"></script>
+  <script src="src/systems/FlashlightSystem.js"></script>
+  <script src="src/systems/ReviveSystem.js"></script>
+  <script src="src/systems/EscapeSystem.js"></script>
+  <script src="src/systems/MinimapSystem.js"></script>
+  <script src="src/systems/JumpSystem.js"></script>
+  <script src="src/systems/WeaponBar.js"></script>
 
   <!-- Three.js场景建造（依赖main中的animate） -->
   <script src="src/scripts/game-scene.js"></script>
@@ -245,9 +501,96 @@
     // ============================================================
     // 启动
     // ============================================================
-    // 绘制角色头像: 奇奇(男孩) / 妙妙(女孩)
+    // 绘制角色头像: 奇奇(男孩) / 妙妙(女孩) / 爸爸
     drawAvatar('avatar-qike', 'boy', '#ff8800', '#ff6600');
     drawAvatar('avatar-miaomiao', 'girl', '#cc77ff', '#9944ff');
+    drawAvatar('avatar-baba', 'dad', '#4a7c59', '#8a6b3f');
+    // 绘制小头像（用于房间角色选择）
+    drawAvatar('slot-avatar-qike', 'boy', '#ff8800', '#ff6600');
+    drawAvatar('slot-avatar-miaomiao', 'girl', '#cc77ff', '#9944ff');
+    drawAvatar('slot-avatar-baba', 'dad', '#4a7c59', '#8a6b3f');
+
+    // ============================================================
+    // 联机模式函数
+    // ============================================================
+    function showMultiplayerLobby() {
+      document.getElementById('char-select').classList.add('hidden');
+      document.getElementById('multiplayer-lobby').classList.remove('hidden');
+      document.getElementById('join-room-form').classList.add('hidden');
+      // 进场就摇一个随机昵称：原来写死"冒险家"，联机时几个人全叫同一个名字。
+      // 只在空着或还是旧默认值时才摇，别把玩家自己改过的名字冲掉。
+      if (typeof rollNickname === 'function') {
+        var _ni = document.getElementById('multiplayer-name-input');
+        if (_ni && (!_ni.value || _ni.value === '冒险家')) rollNickname();
+      }
+      // 重置创建中状态（安全兜底）
+      var creating = document.getElementById('mp-creating');
+      if (creating) { creating.classList.add('hidden'); creating.style.display = 'none'; }
+      var actions = document.querySelector('.mp-actions');
+      if (actions) actions.style.display = 'flex';
+      // 进场先探一次服务器：用户不用点"创建房间"就能看出能不能连
+      if (typeof MultiplayerUI !== 'undefined' && MultiplayerUI.refreshDiag) {
+        MultiplayerUI.refreshDiag();
+      }
+    }
+
+    function backToMultiplayerLobby() {
+      document.getElementById('multiplayer-lobby').classList.add('hidden');
+      document.getElementById('char-select').classList.remove('hidden');
+    }
+
+    function showJoinRoom() {
+      document.getElementById('join-room-form').classList.remove('hidden');
+      // 清掉上一次的加入状态，并把焦点直接放到房间码输入框（手机会自动弹数字键盘）
+      if (typeof setJoinStatus === 'function') setJoinStatus('', '');
+      setTimeout(function () {
+        var ci = document.getElementById('room-code-input');
+        if (ci) ci.focus();
+      }, 60);
+    }
+
+    // 联机模式难度/章节选择
+    // 房主改动难度/章节后广播给全房，加入者据此更新显示（只读）。
+    // 不广播的话，加入者看到的永远是页面里写死的默认值 —— 房主改成第 5 章，
+    // 加入者那边还显示"第3章"，锁定状态下等于给了错误信息。
+    function broadcastMPSettings() {
+      if (typeof PeerManager === 'undefined' || !PeerManager.connected) return;
+      if (!PeerManager.isHost) return;
+      PeerManager.broadcast('room_settings', {
+        difficulty: selectedDiff,
+        chapter: selectedChapter
+      });
+    }
+
+    function selectMPDifficulty(diff) {
+      selectedDiff = diff;
+      var opts = document.querySelectorAll('#rl-settings .rl-setting-opt[data-diff]');
+      opts.forEach(function (o) { o.classList.remove('selected'); });
+      var el = document.querySelector('#rl-settings .rl-setting-opt[data-diff="' + diff + '"]');
+      if (el) el.classList.add('selected');
+      // 房主改难度立刻落到 GS，开局时直接生效（加入者以 game_start 下发的为准）
+      if (typeof PeerManager !== 'undefined' && PeerManager.isHost) GS.difficulty = diff;
+      updateMPSettingsDesc();
+      broadcastMPSettings();
+    }
+
+    function selectMPChapter(ch) {
+      selectedChapter = ch;
+      var opts = document.querySelectorAll('#rl-settings .rl-setting-opt-ch');
+      opts.forEach(function (o) { o.classList.remove('selected'); });
+      var el = document.querySelector('#rl-settings .rl-setting-opt-ch[data-ch="' + ch + '"]');
+      if (el) el.classList.add('selected');
+      updateMPSettingsDesc();
+      broadcastMPSettings();
+    }
+
+    function updateMPSettingsDesc() {
+      var diffNames = { easy: '🌱 初级', medium: '🌿 中级', hard: '🌳 高级' };
+      var el = document.getElementById('rl-settings-desc');
+      if (el) el.textContent = (diffNames[selectedDiff] || '🌱 初级') + ' · 第' + (selectedChapter || 1) + '章';
+    }
+
+    // 设置联机模式默认章节
 
     // 隐藏加载界面，显示角色选择
     document.getElementById('loading').style.display = 'none';
@@ -277,10 +620,45 @@
       selectChapter(pending.chapter);
     })();
 
+    // 诊断：正常情况同一时刻只应有一个可见的返回按钮。
+    // 若出现多个，说明页面显隐（display）没生效，按钮会互相遮挡导致"点了没反应"。
+    setTimeout(function () {
+      try {
+        var btns = [].slice.call(document.querySelectorAll('.back-btn'));
+        var visible = btns.filter(function (b) { return b.offsetParent !== null; });
+        if (visible.length > 1) {
+          console.warn('[诊断] 检测到 ' + visible.length + ' 个可见的返回按钮（可能互相遮挡）:',
+            visible.map(function (b) { return b.getAttribute('onclick') || b.id; }));
+        }
+      } catch (e) { }
+    }, 1200);
+
     // PWA: 注册 Service Worker
-    if ('serviceWorker' in navigator) {
+    // 注意：sw.js 曾是 cache-first 并缓存了 game.html，导致改完前端用户刷新也看不到更新。
+    // 现已改为 HTML network-first，并在这里主动检查更新 + 新版本接管后自动刷新一次。
+    console.log('[奇迹森林] UI build 2026-10-19x');
+
+    // Android WebView（UA 含 "; wv)"）里跳过 Service Worker：
+    // App 壳已经用 Cache-Control: no-store 保证每次取最新，
+    // 而 SW 在 file/assets 场景下反而会把旧资源锁住。
+    var isAndroidWebView = navigator.userAgent.indexOf('; wv)') > -1;
+    if ('serviceWorker' in navigator && !isAndroidWebView) {
+      // 新 SW 接管后自动刷新，避免用户停留在旧页面上反复点"没反应的按钮"
+      var SW_RELOAD_KEY = 'mf-sw-reload-at';
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        var last = Number(sessionStorage.getItem(SW_RELOAD_KEY) || 0);
+        if (Date.now() - last < 8000) return; // 8 秒内只刷新一次，防止循环
+        sessionStorage.setItem(SW_RELOAD_KEY, String(Date.now()));
+        location.reload();
+      });
+
       navigator.serviceWorker.register('sw.js').then(function (reg) {
         console.log('SW registered:', reg.scope);
+        // 浏览器默认可能很久才检查一次更新，这里主动触发
+        try { reg.update(); } catch (e) { }
+        if (reg.waiting) {
+          try { reg.waiting.postMessage({ type: 'SKIP_WAITING' }); } catch (e) { }
+        }
       }).catch(function (err) {
         console.log('SW registration failed:', err);
       });

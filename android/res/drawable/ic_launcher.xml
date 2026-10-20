@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 圆形底：翠绿渐变，呼应第一章的森林场景 -->
+    <path android:pathData="M54,6 A48,48 0 1,1 53.9,6 Z">
+        <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:fillColor">
+            <gradient
+                android:startX="14" android:startY="14"
+                android:endX="94" android:endY="94"
+                android:type="linear">
+                <item android:offset="0" android:color="#5FD98A" />
+                <item android:offset="1" android:color="#2E8B57" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 内圈高光 -->
+    <path
+        android:pathData="M54,16 A38,38 0 1,1 53.9,16 Z"
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeAlpha="0.28" />
+
+    <!-- 五角星：游戏里的星星奖励 -->
+    <path
+        android:pathData="M54,28 L60.4,45.2 L78.5,45.9 L64.2,57.4 L69.1,75.1 L54,65.2 L38.9,75.1 L43.8,57.4 L29.5,45.9 L47.6,45.2 Z"
+        android:fillColor="#FFE066"
+        android:strokeColor="#E0A800"
+        android:strokeWidth="1.5" />
+</vector>

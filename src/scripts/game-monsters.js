@@ -1,191 +1,441 @@
 // ============================================================
-// 怪物系统 - 多种类怪物 + 章节 Boss
+// 怪物造型构建 - 头身分离的卡通生物
+// 结构：躯干 + 独立的头 + 四肢 + 类型配件
+// 这样五官始终贴在头上，不会被身体吞掉，剪影也更像生物
 // ============================================================
 
-// 参数化怪物模型构建
+function _monsterTint(hex, sDelta, lDelta) {
+  var c = new THREE.Color(hex);
+  var hsl = { h: 0, s: 0, l: 0 };
+  c.getHSL(hsl);
+  c.setHSL(hsl.h, Math.max(0.06, Math.min(1, hsl.s + sDelta)), Math.max(0.06, Math.min(0.92, hsl.l + lDelta)));
+  return c.getHex();
+}
+
 function buildMonsterMesh(t) {
+  var S = VX.shape, M = VX.materials;
   var g = new THREE.Group();
 
-  var bodyMat = new THREE.MeshStandardMaterial({
-    color: t.color, roughness: 0.6, metalness: 0.3,
-    emissive: t.emissive, emissiveIntensity: 0.15
-  });
-  var body = new THREE.Mesh(new THREE.SphereGeometry(0.85, 16, 16), bodyMat);
-  body.position.y = 0.8; body.castShadow = true; g.add(body);
+  var isBoss = (t.scale || 1) >= 2;
+  var k = isBoss ? 1.16 : 1.0;          // 只微调比例，整体缩放由调用方负责
+  var isFly = !!t.fly;
+  var isRanged = !!t.ranged;
+  var isCharge = !!t.charge;
 
-  var stripeMat = new THREE.MeshStandardMaterial({ color: 0x440000, roughness: 0.5, transparent: true, opacity: 0.45 });
-  for (var si = 0; si < 5; si++) {
-    var stripe = new THREE.Mesh(new THREE.TorusGeometry(0.6 + si * 0.05, 0.025, 6, 16), stripeMat);
-    stripe.position.y = 0.5 + si * 0.15; stripe.rotation.x = Math.PI / 2; g.add(stripe);
-  }
+  // ---------------- 配色 ----------------
+  var bodyHex = _monsterTint(t.color, 0.16, 0.3);
+  var bellyHex = _monsterTint(t.color, 0.0, 0.58);
+  var darkHex = _monsterTint(t.color, 0.06, 0.02);
+  var accentHex = (t.emissive !== undefined) ? t.emissive : 0xffb066;
 
-  // 恐怖大眼睛：更大、更红、更亮，带血丝和怒眉
-  var eyeCount = t.eyes || 2;
-  for (var ei = 0; ei < eyeCount; ei++) {
-    var a = (ei - (eyeCount - 1) / 2) * 0.55;
-    var ex = Math.sin(a) * 0.55;
-    var ez = Math.cos(a) * 0.55;
-    var ey = 0.9 + (ei % 3) * 0.1;
-    // 眼白（更大，偏黄）
-    var eyeWhite = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 10), new THREE.MeshStandardMaterial({ color: 0xeeddbb }));
-    eyeWhite.position.set(ex, ey, ez); g.add(eyeWhite);
-    // 瞳孔（血红大瞳孔，发光）
-    var pupilMat = new THREE.MeshStandardMaterial({ color: 0xff2200, emissive: 0xff0000, emissiveIntensity: 0.9 });
-    var pupil = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), pupilMat);
-    pupil.position.set(ex * 1.05, ey, ez * 1.08); g.add(pupil);
-    // 瞳孔中心黑点
-    var core = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), new THREE.MeshBasicMaterial({ color: 0x000000 }));
-    core.position.set(ex * 1.05, ey, ez * 1.12); g.add(core);
-    // 高光反射
-    var highlight = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 6), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-    highlight.position.set(ex * 1.1, ey + 0.05, ez * 1.1); g.add(highlight);
-    // 血丝（多条红色细线环绕）
-    for (var vs = 0; vs < 4; vs++) {
-      var vein = new THREE.Mesh(new THREE.BoxGeometry(0.005, 0.08, 0.005), new THREE.MeshBasicMaterial({ color: 0xcc2222, transparent: true, opacity: 0.6 }));
-      var angle = Math.random() * Math.PI * 2;
-      var radius = 0.15 + Math.random() * 0.08;
-      vein.position.set(ex + Math.cos(angle) * radius, ey + Math.sin(angle) * radius * 0.6, ez * 1.05);
-      vein.rotation.z = (Math.random() - 0.5) * 0.6;
-      g.add(vein);
-    }
-    // 怒眉（斜向下压的深色眉骨）
-    var browMat = new THREE.MeshStandardMaterial({ color: 0x220000, roughness: 0.8 });
-    var brow = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.04, 0.06), browMat);
-    brow.position.set(ex, ey + 0.22, ez * 1.05);
-    brow.rotation.x = -0.3;
-    brow.rotation.z = ei === 0 ? 0.35 : -0.35; // 八字怒眉向内倾斜
-    g.add(brow);
-  }
-  // 额外：第三只竖眼（Boss专属或随机）
-  if (t.eyes > 2 || Math.random() > 0.5) {
-    var thirdEye = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8), new THREE.MeshStandardMaterial({ color: 0xff4400, emissive: 0xff2200, emissiveIntensity: 0.8 }));
-    thirdEye.position.set(0, 1.25, 0.6);
-    g.add(thirdEye);
-    var thirdPupil = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6), new THREE.MeshBasicMaterial({ color: 0x000000 }));
-    thirdPupil.position.set(0, 1.25, 0.68);
-    g.add(thirdPupil);
-  }
-  // 龇牙咧嘴的大嘴巴：横向裂开 + 尖牙
-  var mouthMat = new THREE.MeshBasicMaterial({ color: 0x110000 });
-  var mouth = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 8), mouthMat);
-  mouth.position.set(0, 0.55, 0.75);
-  mouth.scale.set(1.0, 0.4, 0.5);
-  g.add(mouth);
-  // 牙龈
-  var gumMat = new THREE.MeshStandardMaterial({ color: 0x661111, roughness: 0.7 });
-  var gum = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), gumMat);
-  gum.position.set(0, 0.55, 0.82);
-  gum.scale.set(0.9, 0.25, 0.3);
-  g.add(gum);
-  // 上排尖牙
-  var toothMat = new THREE.MeshStandardMaterial({ color: 0xffeecc, roughness: 0.2, emissive: 0x442211, emissiveIntensity: 0.05 });
-  for (var ti = 0; ti < 6; ti++) {
-    var tx = -0.25 + ti * 0.1;
-    var tooth = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.12, 4), toothMat);
-    tooth.position.set(tx, 0.62, 0.85);
-    tooth.rotation.x = 0.2;
-    tooth.rotation.z = (ti % 2 === 0) ? 0.1 : -0.1;
-    g.add(tooth);
-    // 下排尖牙（交错排列）
-    var lowerTooth = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.1, 4), toothMat);
-    lowerTooth.position.set(tx + 0.05, 0.48, 0.85);
-    lowerTooth.rotation.x = -0.2;
-    lowerTooth.rotation.z = (ti % 2 === 0) ? -0.1 : 0.1;
-    g.add(lowerTooth);
-  }
-  // 两侧獠牙（更长更尖）
-  var fangBigMat = new THREE.MeshStandardMaterial({ color: 0xeeddcc, roughness: 0.15, emissive: 0x553322, emissiveIntensity: 0.05 });
-  [-0.32, 0.32].forEach(function (fx) {
-    var fang = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.2, 4), fangBigMat);
-    fang.position.set(fx, 0.52, 0.85);
-    fang.rotation.x = 0.5;
-    fang.rotation.z = fx * 3;
-    g.add(fang);
-    var lowerFang = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.18, 4), fangBigMat);
-    lowerFang.position.set(fx, 0.44, 0.85);
-    lowerFang.rotation.x = -0.5;
-    lowerFang.rotation.z = fx * 3;
-    g.add(lowerFang);
-  });
+  var matBody = M.std(bodyHex, { rough: 0.66 });
+  var matBelly = M.std(bellyHex, { rough: 0.72 });
+  var matDark = M.std(darkHex, { rough: 0.78 });
+  var matAccent = M.std(accentHex, { rough: 0.38, emissive: accentHex, emissiveIntensity: 0.5 });
+  var matWhite = M.std(0xfdf9f0, { rough: 0.4 });
+  var matIris = M.std(accentHex, { rough: 0.22, emissive: accentHex, emissiveIntensity: 0.3 });
+  var matPupil = M.std(0x17121f, { rough: 0.28 });
+  var matTooth = M.std(0xfff8ea, { rough: 0.3 });
 
-  if (t.fangs) {
-    var mMat = new THREE.MeshStandardMaterial({ color: 0x440000, roughness: 0.9 });
-    var m = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 6), mMat);
-    m.position.set(0, 0.48, 0.78); g.add(m);
-    var fangMat = new THREE.MeshStandardMaterial({ color: 0xeeddcc, roughness: 0.3 });
-    [-0.1, 0.1].forEach(function (fx) {
-      var fang = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.12, 4), fangMat);
-      fang.position.set(fx, 0.42, 0.82);
-      fang.rotation.x = 0.35; fang.rotation.z = fx * 2.5;
-      g.add(fang);
-    });
-  }
+  // ============================================================
+  // 尺寸基准（脚底 y=0）
+  // ============================================================
+  var torsoR = 0.55 * k;         // 躯干横向半径
+  var torsoY = 0.76 * k;         // 躯干中心高度（抬高以露出腿）
+  var headR = 0.42 * k;          // 头半径
+  var headY = torsoY + torsoR * 0.98 + headR * 0.92;
 
-  var antennaMat = new THREE.MeshStandardMaterial({ color: 0x330011, roughness: 0.7 });
-  [[-0.3, 1.3, 0.2], [0.3, 1.3, 0.2]].forEach(function (p) {
-    var stem = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.35, 5), antennaMat);
-    stem.position.set(p[0], p[1], p[2]); stem.rotation.x = -0.3; g.add(stem);
-    var bulb = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 6), new THREE.MeshStandardMaterial({ color: 0xff2200, emissive: 0xff0000, emissiveIntensity: 0.5 }));
-    bulb.position.set(p[0] - 0.04, p[1] + 0.22, p[2] - 0.04);
-    g.add(bulb);
-  });
+  // ============================================================
+  // 腿：四条短粗腿，外扩到躯干之外，保证可见
+  // ============================================================
+  var legs = [];
+  var legR = 0.105 * k;
+  var legTopY = torsoY - torsoR * 0.34;
+  var legReach = torsoR * 0.94;
 
-  if (t.spikes) {
-    var spikeMat = new THREE.MeshStandardMaterial({ color: t.emissive, roughness: 0.4, emissive: t.emissive, emissiveIntensity: 0.2 });
-    for (var sk = 0; sk < 4; sk++) {
-      var spike = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.35, 6), spikeMat);
-      spike.position.set(0, 1.35 + sk * 0.05, -0.15 - sk * 0.2);
-      spike.rotation.x = -0.5 - sk * 0.15;
-      g.add(spike);
-    }
-  }
+  for (var li = 0; li < 4; li++) {
+    var ang = (li / 4) * Math.PI * 2 + Math.PI * 0.25;
+    var lx = Math.cos(ang) * legReach;
+    var lz = Math.sin(ang) * legReach * 0.78;
 
-  if (t.fly) {
-    var wingMat = new THREE.MeshBasicMaterial({ color: t.color, transparent: true, opacity: 0.4, side: THREE.DoubleSide });
-    [-1, 1].forEach(function (side) {
-      var wing = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.45), wingMat);
-      wing.position.set(side * 0.75, 1.0, -0.1);
-      wing.rotation.y = side * 0.4;
-      wing.rotation.z = side * 0.25;
-      g.add(wing);
-    });
-  }
-
-  var legPositions = t.fly ? [[-0.4, 0.2, 0.4], [0.4, 0.2, 0.4], [-0.4, 0.2, -0.4], [0.4, 0.2, -0.4]] : [
-    [-0.5, 0.3, 0.5], [-0.5, 0.3, -0.5],
-    [0.5, 0.3, 0.5], [0.5, 0.3, -0.5],
-    [-0.3, 0.15, 0.7], [0.3, 0.15, 0.7]
-  ];
-  var legMat = new THREE.MeshStandardMaterial({ color: t.color, roughness: 0.6 });
-  legPositions.forEach(function (p, idx) {
     var legGroup = new THREE.Group();
-    var upperLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 0.25, 6), legMat);
-    upperLeg.position.y = 0.125; legGroup.add(upperLeg);
-    var lowerLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.05, 0.22, 6), legMat);
-    lowerLeg.position.set(0, -0.12, -0.15); lowerLeg.rotation.x = 0.5; legGroup.add(lowerLeg);
-    var claw = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 6), new THREE.MeshStandardMaterial({ color: t.emissive, roughness: 0.5 }));
-    claw.position.set(0.02, -0.25, -0.25); legGroup.add(claw);
-    legGroup.position.set(p[0], p[1], p[2]);
-    legGroup.rotation.z = idx % 2 === 0 ? 0.5 : -0.5;
+    legGroup.position.set(lx, legTopY, lz);
+
+    var leg = new THREE.Mesh(S.capsule(legR, legTopY * 0.72, 8, 4), matDark);
+    leg.position.y = -legTopY * 0.34;
+    leg.rotation.z = Math.cos(ang) * 0.24;
+    leg.rotation.x = -Math.sin(ang) * 0.24;
+    leg.castShadow = true;
+    legGroup.add(leg);
+
+    var foot = new THREE.Mesh(S.ellipsoid(legR * 1.5, legR * 0.72, legR * 1.7, 10), matDark);
+    foot.position.set(Math.cos(ang) * 0.045, -legTopY * 0.78, Math.sin(ang) * 0.045);
+    foot.castShadow = true;
+    legGroup.add(foot);
+
+    // 爪尖
+    for (var ci = 0; ci < 3; ci++) {
+      var claw = new THREE.Mesh(S.taper(0.004, 0.03, 0.11, 6), matTooth);
+      claw.position.set((ci - 1) * legR * 0.72, -legTopY * 0.82, Math.sin(ang) * 0.1 + legR * 1.15);
+      claw.rotation.x = 1.75;
+      legGroup.add(claw);
+    }
+
     g.add(legGroup);
-  });
-
-  var tailMat = new THREE.MeshStandardMaterial({ color: t.color, roughness: 0.6 });
-  for (var ti = 0; ti < 5; ti++) {
-    var tSeg = new THREE.Mesh(new THREE.SphereGeometry(0.05 + ti * 0.01, 6, 6), tailMat);
-    tSeg.position.set(0, 0.3 + ti * 0.12, -0.6 - ti * 0.15); g.add(tSeg);
+    legs.push({ group: legGroup, phase: li * Math.PI / 2, baseY: legTopY });
   }
-  var tailTip = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6), new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xffd700, emissiveIntensity: 0.5 }));
-  tailTip.position.set(0, 0.78, -1.2); g.add(tailTip);
 
-  var glowSphere = new THREE.Mesh(
-    new THREE.SphereGeometry(1.1, 12, 12),
-    new THREE.MeshBasicMaterial({ color: t.emissive, transparent: true, opacity: 0.08, side: THREE.DoubleSide })
+  // ============================================================
+  // 躯干
+  // ============================================================
+  var torso = new THREE.Group();
+  torso.position.y = torsoY;
+  g.add(torso);
+
+  var body = new THREE.Mesh(S.ellipsoid(torsoR * 0.94, torsoR * 1.08, torsoR * 0.9, 20), matBody);
+  if (isCharge) body.scale.z = 1.15;
+  body.castShadow = true;
+  body.receiveShadow = true;
+  torso.add(body);
+
+  // 腹部浅色
+  var belly = new THREE.Mesh(S.ellipsoid(torsoR * 0.66, torsoR * 0.62, torsoR * 0.36, 14), matBelly);
+  belly.position.set(0, -torsoR * 0.2, torsoR * 0.66);
+  torso.add(belly);
+
+  // 胸背甲片（Boss）
+  if (isBoss) {
+    var plate = new THREE.Mesh(S.ellipsoid(torsoR * 0.9, torsoR * 0.62, torsoR * 0.42, 14), matDark);
+    plate.position.set(0, torsoR * 0.42, torsoR * 0.42);
+    plate.rotation.x = -0.3;
+    torso.add(plate);
+  }
+
+  // ============================================================
+  // 手臂
+  // ============================================================
+  var arms = [];
+  var armCount = (isFly || isCharge) ? 0 : 2;
+  for (var ai = 0; ai < armCount; ai++) {
+    var side = ai === 0 ? -1 : 1;
+    var armGroup = new THREE.Group();
+    armGroup.position.set(side * torsoR * 0.86, torsoR * 0.16, torsoR * 0.24);
+
+    var upper = new THREE.Mesh(S.capsule(0.072 * k, 0.16 * k, 8, 4), matBody);
+    upper.position.y = -0.11 * k;
+    upper.rotation.z = side * 0.42;
+    upper.castShadow = true;
+    armGroup.add(upper);
+
+    var hand = new THREE.Mesh(new THREE.SphereGeometry(0.095 * k, 10, 10), matDark);
+    hand.position.set(side * 0.11 * k, -0.235 * k, 0.02);
+    armGroup.add(hand);
+
+    if (isBoss) {
+      for (var cj = 0; cj < 3; cj++) {
+        var ac = new THREE.Mesh(S.taper(0.004, 0.028, 0.13, 6), matTooth);
+        ac.position.set(side * (0.08 + cj * 0.04), -0.3 * k, 0.06);
+        ac.rotation.x = 0.85;
+        armGroup.add(ac);
+      }
+    }
+
+    torso.add(armGroup);
+    arms.push({ group: armGroup, side: side, base: side * 0.42 });
+  }
+
+  // ============================================================
+  // 头
+  // ============================================================
+  var head = new THREE.Group();
+  head.position.set(0, headY, torsoR * 0.1);
+  g.add(head);
+
+  // 脖子
+  var neck = new THREE.Mesh(new THREE.CylinderGeometry(headR * 0.44, headR * 0.62, headR * 0.62, 12), matBody);
+  neck.position.set(0, -headR * 0.82, -0.02);
+  head.add(neck);
+
+  var skull = new THREE.Mesh(S.ellipsoid(headR, headR * 0.94, headR * 0.92, 18), matBody);
+  skull.castShadow = true;
+  head.add(skull);
+
+  // ---- 眼睛（贴在头前表面）----
+  var eyeR = headR * 0.34;
+  var eyeX = headR * 0.42;
+  var eyeY = headR * 0.1;
+  var eyeZ = headR * 0.86;
+  var eyeGroups = [];
+
+  var eyeCount = Math.min(t.eyes || 2, 2);
+  for (var ei = 0; ei < eyeCount; ei++) {
+    var ex = eyeCount === 1 ? 0 : (ei === 0 ? -eyeX : eyeX);
+    var eye = new THREE.Group();
+    eye.position.set(ex, eyeY, eyeZ);
+
+    var white = new THREE.Mesh(S.ellipsoid(eyeR, eyeR * 1.16, eyeR * 0.62, 14), matWhite);
+    eye.add(white);
+
+    var iris = new THREE.Mesh(new THREE.SphereGeometry(eyeR * 0.72, 14, 14), matIris);
+    iris.position.z = eyeR * 0.38;
+    eye.add(iris);
+
+    var pupil = new THREE.Mesh(new THREE.SphereGeometry(eyeR * 0.38, 12, 12), matPupil);
+    pupil.position.z = eyeR * 0.58;
+    eye.add(pupil);
+
+    var shine = new THREE.Mesh(new THREE.SphereGeometry(eyeR * 0.2, 8, 8), matWhite);
+    shine.position.set(-eyeR * 0.2, eyeR * 0.28, eyeR * 0.6);
+    eye.add(shine);
+
+    var shine2 = new THREE.Mesh(new THREE.SphereGeometry(eyeR * 0.1, 6, 6), matWhite);
+    shine2.position.set(eyeR * 0.22, -eyeR * 0.16, eyeR * 0.58);
+    eye.add(shine2);
+
+    // 细眉骨：只压住眼睛上缘一点点，保留凶相但不挡眼
+    var brow = new THREE.Mesh(S.roundedBox(eyeR * 1.5, eyeR * 0.16, eyeR * 0.2, eyeR * 0.06, 2), matDark);
+    brow.position.set(0, eyeR * 0.92, eyeR * 0.3);
+    brow.rotation.z = ei === 0 ? -0.22 : 0.22;
+    eye.add(brow);
+
+    head.add(eye);
+    eyeGroups.push(eye);
+  }
+
+  // 额外小眼（保留多眼怪特征）
+  var extra = Math.min(Math.max((t.eyes || 0) - 2, 0), 3);
+  for (var xi = 0; xi < extra; xi++) {
+    var sx = (xi - (extra - 1) / 2) * headR * 0.42;
+    var se = new THREE.Mesh(S.ellipsoid(headR * 0.13, headR * 0.15, headR * 0.08, 8), matIris);
+    se.position.set(sx, headR * 0.52, headR * 0.62);
+    head.add(se);
+    var sp = new THREE.Mesh(new THREE.SphereGeometry(headR * 0.06, 6, 6), matPupil);
+    sp.position.set(sx, headR * 0.52, headR * 0.68);
+    head.add(sp);
+  }
+
+  // ---- 嘴 ----
+  var mouthY = -headR * 0.42;
+  var mouthZ = headR * 0.88;
+
+  if (isFly) {
+    // 鸟喙
+    var beak = new THREE.Mesh(S.taper(0.02, headR * 0.3, headR * 0.62, 4), matAccent);
+    beak.position.set(0, mouthY + headR * 0.1, mouthZ + headR * 0.18);
+    beak.rotation.set(Math.PI / 2, Math.PI / 4, 0);
+    head.add(beak);
+  } else {
+    var mouth = new THREE.Mesh(
+      S.ellipsoid(headR * 0.42, headR * 0.2, headR * 0.13, 12),
+      M.std(0x2a1520, { rough: 0.5 })
+    );
+    mouth.position.set(0, mouthY, mouthZ - headR * 0.04);
+    head.add(mouth);
+
+    // 两颗圆润小牙
+    if (t.fangs) {
+      [-1, 1].forEach(function (mx) {
+        var tooth = new THREE.Mesh(S.taper(0.004, 0.045, 0.13, 6), matTooth);
+        tooth.position.set(mx * headR * 0.22, mouthY + headR * 0.1, mouthZ + headR * 0.02);
+        tooth.rotation.x = Math.PI + 0.18;
+        head.add(tooth);
+      });
+    }
+  }
+
+  // ---- 头部配件 ----
+  if (isRanged) {
+    // 兜帽
+    var hood = new THREE.Mesh(
+      new THREE.SphereGeometry(headR * 1.16, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.62),
+      matDark
+    );
+    hood.position.y = headR * 0.06;
+    hood.scale.set(1, 1.12, 1);
+    head.add(hood);
+    var hoodTip = new THREE.Mesh(S.taper(0.02, headR * 0.34, headR * 0.5, 10), matDark);
+    hoodTip.position.set(0, headR * 0.92, -headR * 0.1);
+    hoodTip.rotation.x = -0.35;
+    head.add(hoodTip);
+    // 兜帽下的阴影
+    var shade = new THREE.Mesh(S.ellipsoid(headR * 0.75, headR * 0.42, headR * 0.12, 12), M.std(0x120d18, { rough: 0.9 }));
+    shade.position.set(0, headR * 0.12, headR * 0.62);
+    head.add(shade);
+  } else if (t.spikes) {
+    var hornCount = isBoss ? 3 : 2;
+    for (var hi = 0; hi < hornCount; hi++) {
+      var ha = hornCount === 1 ? 0 : (hi - (hornCount - 1) / 2) * 0.62;
+      var horn = new THREE.Mesh(S.taper(0.006, headR * 0.19, headR * 0.78, 8), matAccent);
+      horn.position.set(Math.sin(ha) * headR * 0.42, headR * 0.82, Math.cos(ha) * headR * 0.12 - headR * 0.1);
+      horn.rotation.z = ha * 0.7;
+      horn.rotation.x = -0.28;
+      head.add(horn);
+    }
+  } else {
+    // 圆耳朵
+    [-1, 1].forEach(function (side) {
+      var ear = new THREE.Mesh(S.ellipsoid(headR * 0.2, headR * 0.3, headR * 0.14, 10), matBody);
+      ear.position.set(side * headR * 0.62, headR * 0.62, -headR * 0.1);
+      ear.rotation.z = side * 0.42;
+      head.add(ear);
+      var inner = new THREE.Mesh(S.ellipsoid(headR * 0.11, headR * 0.18, headR * 0.07, 8), matBelly);
+      inner.position.set(side * headR * 0.66, headR * 0.62, -headR * 0.02);
+      inner.rotation.z = side * 0.42;
+      head.add(inner);
+    });
+  }
+
+  // Boss 王冠角
+  if (isBoss) {
+    var crown = new THREE.Mesh(new THREE.CylinderGeometry(headR * 0.34, headR * 0.42, headR * 0.26, 8), M.metal(0xffc94a));
+    crown.position.y = headR * 0.95;
+    head.add(crown);
+    for (var pi = 0; pi < 3; pi++) {
+      var pj = new THREE.Mesh(S.taper(0.004, 0.05, headR * 0.42, 6), M.metal(0xffc94a));
+      pj.position.set((pi - 1) * headR * 0.26, headR * 1.22, 0);
+      pj.rotation.z = (pi - 1) * -0.2;
+      head.add(pj);
+    }
+  }
+
+  // ============================================================
+  // 背部配件
+  // ============================================================
+  var wingRefs = [];
+  if (isFly) {
+    [-1, 1].forEach(function (side) {
+      var wingG = new THREE.Group();
+      wingG.position.set(side * torsoR * 0.6, torsoR * 0.42, -torsoR * 0.42);
+
+      var wingMat = M.std(_monsterTint(t.color, 0.06, 0.4), {
+        rough: 0.55, transparent: true, opacity: 0.9, side: THREE.DoubleSide
+      });
+      var wing = new THREE.Mesh(new THREE.CircleGeometry(torsoR * 1.05, 14, 0, Math.PI * 0.86), wingMat);
+      wing.rotation.set(0, side * Math.PI / 2, Math.PI * 0.1);
+      wing.scale.set(1, 1.2, 1);
+      wingG.add(wing);
+
+      var bone = new THREE.Mesh(S.capsule(0.026, torsoR * 0.8, 6, 4), matDark);
+      bone.position.set(0, torsoR * 0.4, 0);
+      bone.rotation.z = side * 1.1;
+      wingG.add(bone);
+
+      g.add(wingG);
+      wingRefs.push(wingG);
+    });
+  }
+
+  if (isRanged) {
+    var cannon = new THREE.Mesh(S.taper(headR * 0.24, headR * 0.34, headR * 0.9, 12), matDark);
+    cannon.position.set(0, torsoR * 1.25, -torsoR * 0.55);
+    cannon.rotation.x = 0.5;
+    cannon.castShadow = true;
+    torso.add(cannon);
+    var muzzle = new THREE.Mesh(new THREE.SphereGeometry(headR * 0.26, 12, 12), matAccent);
+    muzzle.position.set(0, torsoR * 1.4, -torsoR * 0.82);
+    torso.add(muzzle);
+    var muzzleGlow = new THREE.Mesh(new THREE.SphereGeometry(headR * 0.5, 10, 10), M.glow(accentHex, 0.22, true));
+    muzzleGlow.position.copy(muzzle.position);
+    torso.add(muzzleGlow);
+  }
+
+  // ============================================================
+  // 尾巴
+  // ============================================================
+  var tailG = new THREE.Group();
+  tailG.position.set(0, torsoR * 0.05, -torsoR * 0.86);
+  torso.add(tailG);
+
+  for (var ti = 0; ti < 4; ti++) {
+    var seg = new THREE.Mesh(
+      new THREE.SphereGeometry(0.125 * k - ti * 0.021 * k, 8, 8),
+      ti >= 3 ? matAccent : matBody
+    );
+    seg.position.set(0, -ti * ti * 0.018, -ti * 0.185 * k);
+    seg.castShadow = true;
+    tailG.add(seg);
+  }
+  var tailTip = new THREE.Mesh(new THREE.SphereGeometry(0.105 * k, 10, 10), matAccent);
+  tailTip.position.set(0, -0.03, -0.76 * k);
+  tailG.add(tailTip);
+  var tailGlow = new THREE.Mesh(new THREE.SphereGeometry(0.2 * k, 10, 10), M.glow(accentHex, 0.18, true));
+  tailGlow.position.copy(tailTip.position);
+  tailG.add(tailGlow);
+
+  // ============================================================
+  // 落地阴影
+  // ============================================================
+  var shadowDisc = new THREE.Mesh(
+    new THREE.CircleGeometry(torsoR * 0.92, 24),
+    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.16, depthWrite: false })
   );
-  glowSphere.position.y = 0.8; g.add(glowSphere);
+  shadowDisc.rotation.x = -Math.PI / 2;
+  shadowDisc.position.y = 0.015;
+  g.add(shadowDisc);
+
+  // ============================================================
+  // 程序化待机动画
+  // ============================================================
+
+  g.onBeforeRender = function () {
+    if (typeof clock === 'undefined' || !clock) return;
+    var tm = clock.elapsedTime;
+
+    // 呼吸
+    var br = Math.sin(tm * 2.0 + torsoR * 4);
+    torso.scale.set(1 + br * 0.022, 1 - br * 0.018, 1 + br * 0.022);
+    torso.position.y = torsoY + br * 0.012;
+    head.position.y = headY + br * 0.02 + (isFly ? Math.sin(tm * 2.4) * 0.12 + 0.12 : 0);
+    head.rotation.z = Math.sin(tm * 0.9) * 0.035;
+    head.rotation.y = Math.sin(tm * 0.55) * 0.1;
+
+    // 眨眼
+    for (var i = 0; i < eyeGroups.length; i++) {
+      var eye = eyeGroups[i];
+      var cyc = (tm * 0.36 + i * 0.42) % 1;
+      eye.scale.y = cyc > 0.95 ? 0.12 : 1;
+    }
+
+    // 腿起伏
+    for (var l = 0; l < legs.length; l++) {
+      legs[l].group.position.y = legs[l].baseY + Math.sin(tm * 2.0 + legs[l].phase) * 0.018;
+    }
+
+    // 手臂摆动
+    for (var a = 0; a < arms.length; a++) {
+      arms[a].group.rotation.x = Math.sin(tm * 1.5 + a * 1.4) * 0.14;
+      arms[a].group.rotation.z = arms[a].base + Math.sin(tm * 1.2 + a) * 0.06;
+    }
+
+    // 尾巴
+    tailG.rotation.y = Math.sin(tm * 1.8) * 0.28;
+    tailG.rotation.x = Math.sin(tm * 1.3) * 0.08;
+
+    // 翅膀
+    for (var w = 0; w < wingRefs.length; w++) {
+      wingRefs[w].rotation.z = (w === 0 ? 1 : -1) * Math.sin(tm * 8.5) * 0.5;
+    }
+
+    // 飞行体的地面阴影
+    if (isFly) {
+      var hAbove = head.position.y - headY;
+      var sc = Math.max(0.55, 1 - hAbove * 0.5);
+      shadowDisc.scale.set(sc, sc, sc);
+    }
+  };
+
+  // ---- 性能：只有 Boss 投影 ----
+  // 小怪单个模型就有 40+ 个 mesh，场上同时有 11 只。
+  // 全部投影意味着阴影 pass 每帧多渲染 400+ 个 mesh，
+  // 而小怪的影子落在草地上几乎看不出来 —— 代价远大于收益。
+  // 这里统一覆盖前面逐处设置的 castShadow。
+  g.traverse(function (o) {
+    if (o.isMesh) o.castShadow = isBoss;
+  });
 
   return g;
 }
+
 
 function currentChapterData() { return CHAPTERS[GS.chapter - 1] || CHAPTERS[0]; }
 
@@ -193,18 +443,23 @@ function currentChapterData() { return CHAPTERS[GS.chapter - 1] || CHAPTERS[0]; 
 // 时间增强：怪物随游戏时长缓慢变强（替代旧的击杀数增强）
 // ============================================================
 function timeScale() {
+  var cfg = (typeof BALANCE !== 'undefined' && BALANCE.timeScale) ? BALANCE.timeScale : {};
   var minutes = (clock && clock.elapsedTime || 0) / 60;
-  return Math.min(1 + minutes * 0.08, 1.5);
+  return Math.min(1 + minutes * (cfg.perMinute === undefined ? 0.08 : cfg.perMinute), cfg.max || 1.35);
 }
 
-// 按时间系数放大怪物类型数值（返回克隆，不修改原始数据）
+// 按时间系数 + 难度系数放大怪物类型数值（返回克隆，不修改原始数据）
+// 这是「难度」真正影响战斗的地方：简单难度怪物血更少，困难难度更肉
 function scaleMonsterType(t) {
   var s = timeScale();
+  var cfg = (typeof BALANCE !== 'undefined' && BALANCE.timeScale) ? BALANCE.timeScale : {};
+  var diff = (typeof balanceDiff === 'function') ? balanceDiff(GS.difficulty) : { hp: 1 };
   var scaled = {};
   for (var k in t) scaled[k] = t[k];
-  scaled.hp = Math.ceil((t.hp || 100) * s);
+  scaled.hp = Math.ceil((t.hp || 100) * s * (diff.hp || 1));
   scaled.dmg = Math.ceil((t.dmg || 10) * s);
-  scaled.speed = (t.speed || 2) * Math.min(s, 1.3); // 速度增幅上限低一些，避免追不上
+  // 速度增幅上限单独压住：怪物一旦比玩家快，就没有"跑开"这个选项了
+  scaled.speed = (t.speed || 2) * Math.min(s, cfg.maxSpeedRatio || 1.15);
   return scaled;
 }
 

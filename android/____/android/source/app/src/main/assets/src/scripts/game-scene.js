@@ -21,7 +21,7 @@ var ROOMS = [
   { cx: -40, cz: 40, name: '西南' }
 ];
 var DOOR_HALF = 3.6;
-  // 3x3网格中12扇门的位置
+// 3x3网格中12扇门的位置
 var DOOR_POSITIONS = [
   // 垂直墙（x=-20和x=20）上的门: [x, z]
   [-20, -40], [-20, 0], [-20, 40],
@@ -71,7 +71,9 @@ var captureState = {
   tapCount: 0,
   maxTap: 10,
   dmgTimer: 0,
-  grabCooldown: 0
+  grabCooldown: 0,
+  tapDecayTimer: 0,      // 挣脱进度衰减计时
+  escapeBoostTimer: 0    // 挣脱后的加速逃跑窗口
 };
 var chaserLeaveTimer = 0;      // 抓捕者离开计时器
 var CHASER_LEAVE_DURATION = 60; // 60秒后自动离开
@@ -81,11 +83,15 @@ var CHASER_RESPAWN_DELAY = 30;  // 离开后30秒重新生成
 function initScene() {
   var loading = document.getElementById('loading');
   scene = new THREE.Scene();
+  // 同步到 window 供联机同步模块使用
+  window.scene = scene;
   scene.background = new THREE.Color(0x1a1a2e);
   scene.fog = new THREE.Fog(0x1a1a2e, 8, 13);
 
   camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 50);
   camera.position.set(0, 5, 10);
+  // 同步到 window 供联机模块使用
+  window.camera = camera;
 
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -119,13 +125,62 @@ function initScene() {
   buildRoom();
   createPlayer();
   initPlayerAnimation();
-  initMonsters();
-  spawnEnergyOrb();
-  spawnItems();
-  buildWeaponBar();
+
+  if (GS.mode === 'multiplayer' && !GS.isHost) {
+    // 加入者模式：不创建怪物、宝箱、道具（由主机同步）
+    // 但保留武器栏
+    buildWeaponBar();
+    // 初始化空数组（必须挂载到 window 以便同步模块访问）
+    // 注意：如果 items 已经被 _syncItems 同步过，不要覆盖（会丢失已同步道具）
+    if (typeof window.items === 'undefined' || window.items.length === 0) {
+      window.items = [];
+    }
+    if (typeof window.monsters === 'undefined' || window.monsters.length === 0) {
+      window.monsters = [];
+    }
+    if (typeof window.bosses === 'undefined' || window.bosses.length === 0) {
+      window.bosses = [];
+    }
+    if (typeof window.normalChests === 'undefined' || window.normalChests.length === 0) {
+      window.normalChests = [];
+    }
+    if (typeof window.fragmentDrops === 'undefined' || window.fragmentDrops.length === 0) {
+      window.fragmentDrops = [];
+    }
+    window.chaserMonster = null;
+    // 同步局部变量引用
+    monsters = window.monsters;
+    bosses = window.bosses;
+    items = window.items;
+    normalChests = window.normalChests;
+    fragmentDrops = window.fragmentDrops;
+    chaserMonster = window.chaserMonster;
+    energyOrb = window.energyOrb;
+  } else {
+    // 单机模式 / 主机模式：创建所有游戏实体
+    initMonsters();
+    spawnEnergyOrb();
+    spawnItems();
+    spawnInitialChests();
+    buildWeaponBar();
+  }
+
+  // 同步所有游戏实体引用到 window，供联机同步模块访问
+  // 对于加入者，这些已经在上面设置过，这里是安全的兜底
+  window.monsters = monsters;
+  window.bosses = bosses;
+  window.items = items;
+  window.normalChests = normalChests;
+  window.fragmentDrops = fragmentDrops;
+  // 注意：energyOrb/chaserMonster/ship 已在 spawnEnergyOrb/spawnChaser/createShip 中设置
+  // 这里不要重置为 null，否则会覆盖已有的值
+  if (!window.energyOrb) window.energyOrb = null;
+  if (!window.chaserMonster) window.chaserMonster = null;
+  if (!window.ship) window.ship = null;
+  window.clock = clock;
 
   AudioMgr.init();
-  
+
 
   document.getElementById('char-name').textContent = GS.character === 'qike' ? '奇奇' : '妙妙';
 
@@ -205,8 +260,8 @@ function buildRoom() {
   function addSegmentedWall(fixedCoord, ry, doorPositions) {
     var halfLen = S;
     var prev = -halfLen;
-    var sortedDoors = doorPositions.slice().sort(function(a,b){return a-b;});
-    sortedDoors.forEach(function(dp) {
+    var sortedDoors = doorPositions.slice().sort(function (a, b) { return a - b; });
+    sortedDoors.forEach(function (dp) {
       var gapStart = dp - G;
       var gapEnd = dp + G;
       if (gapStart > prev + 0.01) {
@@ -241,14 +296,14 @@ function buildRoom() {
 
   // 门框柱子/横梁（12扇门）
   var frameMat = new THREE.MeshStandardMaterial({ color: 0x1a1014, roughness: 0.9 });
-  DOOR_POSITIONS.forEach(function(dp) {
+  DOOR_POSITIONS.forEach(function (dp) {
     var dx = dp[0], dz = dp[1];
     // 判断门方向：垂直墙(x固定) or 水平墙(z固定)
     var isVertical = (dx === -H || dx === H);
     // 柱子：左右两侧
     if (isVertical) {
       // 垂直墙：门沿z轴，柱子沿z方向两侧
-      [-1, 1].forEach(function(s) {
+      [-1, 1].forEach(function (s) {
         var pillar = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.6, 0.3), frameMat);
         pillar.position.set(dx, 1.8, dz + s * (G + 0.2));
         scene.add(pillar);
@@ -259,7 +314,7 @@ function buildRoom() {
       scene.add(beam);
     } else {
       // 水平墙：门沿x轴，柱子沿x方向两侧
-      [-1, 1].forEach(function(s) {
+      [-1, 1].forEach(function (s) {
         var pillar = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.6, 0.3), frameMat);
         pillar.position.set(dx + s * (G + 0.2), 1.8, dz);
         scene.add(pillar);
@@ -272,7 +327,7 @@ function buildRoom() {
   });
 
   // 家具分布到9个房间（在每个房间随机放一些）
-  ROOMS.forEach(function(rm, idx) {
+  ROOMS.forEach(function (rm, idx) {
     var rx = rm.cx, rz = rm.cz;
     // 中央房间只放少量家具（保留飞船区域）
     if (idx === 0) {
@@ -285,15 +340,15 @@ function buildRoom() {
     }
     // 其他房间随机分配家具
     var roomFurniture = [
-      function(){ createTable(rx + (Math.random()-0.5)*16, groundY, rz + (Math.random()-0.5)*16, [0x4a3328,0x3a2a20,0x5a3a28][Math.floor(Math.random()*3)]); },
-      function(){ createChair(rx + (Math.random()-0.5)*18, groundY, rz + (Math.random()-0.5)*18); },
-      function(){ createBed(rx + (Math.random()-0.5)*10, groundY, rz + (Math.random()-0.5)*10); },
-      function(){ createBookshelf(rx + (Math.random()-0.5)*12, groundY, rz + (Math.random()-0.5)*12); },
-      function(){ createChest(rx + (Math.random()-0.5)*14, groundY, rz + (Math.random()-0.5)*14); },
-      function(){ createPool(rx + (Math.random()-0.5)*10, groundY, rz + (Math.random()-0.5)*10); },
-      function(){ createCabinet(rx + (Math.random()-0.5)*14, groundY, rz + (Math.random()-0.5)*14); },
-      function(){ createLamp(rx + (Math.random()-0.5)*18, groundY, rz + (Math.random()-0.5)*18); },
-      function(){ createObstacle(rx + (Math.random()-0.5)*16, groundY, rz + (Math.random()-0.5)*16, [0x334444,0x443333,0x333a44,0x3a3344][Math.floor(Math.random()*4)]); },
+      function () { createTable(rx + (Math.random() - 0.5) * 16, groundY, rz + (Math.random() - 0.5) * 16, [0x4a3328, 0x3a2a20, 0x5a3a28][Math.floor(Math.random() * 3)]); },
+      function () { createChair(rx + (Math.random() - 0.5) * 18, groundY, rz + (Math.random() - 0.5) * 18); },
+      function () { createBed(rx + (Math.random() - 0.5) * 10, groundY, rz + (Math.random() - 0.5) * 10); },
+      function () { createBookshelf(rx + (Math.random() - 0.5) * 12, groundY, rz + (Math.random() - 0.5) * 12); },
+      function () { createChest(rx + (Math.random() - 0.5) * 14, groundY, rz + (Math.random() - 0.5) * 14); },
+      function () { createPool(rx + (Math.random() - 0.5) * 10, groundY, rz + (Math.random() - 0.5) * 10); },
+      function () { createCabinet(rx + (Math.random() - 0.5) * 14, groundY, rz + (Math.random() - 0.5) * 14); },
+      function () { createLamp(rx + (Math.random() - 0.5) * 18, groundY, rz + (Math.random() - 0.5) * 18); },
+      function () { createObstacle(rx + (Math.random() - 0.5) * 16, groundY, rz + (Math.random() - 0.5) * 16, [0x334444, 0x443333, 0x333a44, 0x3a3344][Math.floor(Math.random() * 4)]); },
     ];
     // 每个房间放3-5件家具
     var count = 3 + Math.floor(Math.random() * 3);
@@ -315,9 +370,9 @@ function buildRoom() {
 // ============================================================
 function createLargeObstacles() {
   var H = halfRoom;
-  
+
   // 每个房间添加1-2个大型障碍物
-  ROOMS.forEach(function(rm) {
+  ROOMS.forEach(function (rm) {
     // 倒下的柜子
     var fallenCabinet = new THREE.Group();
     var cabMat = new THREE.MeshStandardMaterial({ color: 0x5a3d2c, roughness: 0.8 });
@@ -342,7 +397,7 @@ function createLargeObstacles() {
     var h2 = new THREE.Mesh(new THREE.SphereGeometry(0.03, 6, 6), handleMat);
     h2.position.set(-0.5, 0.3, 0.48);
     fallenCabinet.add(h2);
-    
+
     var fx = rm.cx + (Math.random() - 0.5) * (roomSize - 10);
     var fz = rm.cz + (Math.random() - 0.5) * (roomSize - 10);
     // 避免在中央房间飞船附近
@@ -415,6 +470,7 @@ function createShip() {
   g.position.set(0, groundY, 0);
   scene.add(g);
   ship = g;
+  window.ship = g;
 }
 
 // ============================================================
@@ -618,17 +674,17 @@ function createObstacle(x, y, z, color) {
 }
 
 // ============================================================
-// 金色宝箱系统（原能量球）：答题解锁，开出3-5个能量碎片，30秒刷新
+// 金色宝箱系统（原能量球）：答题解锁，开出3点能量，30秒刷新
 // ============================================================
 function spawnEnergyOrb() {
   if (GS.gameOver || GS.energy >= (GS.energyMax || 5)) return;
 
   // 宝箱不能刷新在中间的房间内
-  var eligibleRooms = ROOMS.filter(function(r) {
+  var eligibleRooms = ROOMS.filter(function (r) {
     return !(r.cx === 0 && r.cz === 0) && r !== lastEnergyOrbRoom;
   });
   if (eligibleRooms.length === 0) {
-    eligibleRooms = ROOMS.filter(function(r) { return !(r.cx === 0 && r.cz === 0); });
+    eligibleRooms = ROOMS.filter(function (r) { return !(r.cx === 0 && r.cz === 0); });
   }
   var targetRoom = eligibleRooms[Math.floor(Math.random() * eligibleRooms.length)];
 
@@ -666,6 +722,7 @@ function spawnEnergyOrb() {
   chest.userData = { active: true, cooldown: 0, floatPhase: Math.random() * Math.PI * 2, glow: glow, isChest: true };
   scene.add(chest);
   energyOrb = chest;
+  window.energyOrb = chest;
   lastEnergyOrbRoom = targetRoom;
   showMessage("🎁 金色宝箱出现在" + targetRoom.name + "房间! 答题解锁", 0xffd700);
 
@@ -677,6 +734,7 @@ function consumeEnergyOrb() {
   if (!energyOrb) return;
   scene.remove(energyOrb);
   energyOrb = null;
+  window.energyOrb = null;
   if (GS.energy < (GS.energyMax || 5)) {
     // 金色宝箱刷新时间：30秒
     setTimeout(spawnEnergyOrb, 30000);
@@ -696,13 +754,13 @@ function spawnBossInRoom(room) {
     }
   }
   if (existingBoss) return; // Boss还活着，不移除
-  
+
   var chd = currentChapterData();
   var t = BOSSES[chd.id] || BOSSES[1];
-  
+
   // 应用时间增强
   var scaledT = scaleMonsterType(t);
-  
+
   var g = buildMonsterMesh(scaledT);
   if (scaledT.scale && scaledT.scale !== 1) g.scale.setScalar(scaledT.scale);
 
@@ -747,9 +805,7 @@ function pickMinionType() {
   return MONSTER_TYPES[mName] || MONSTER_TYPES["追风怪"];
 }
 
-// 新增抓捕者数据
-var chaserMonster = null; // 抓捕者实例
-var captureState = { captured: false, tapCount: 0, maxTap: 10, dmgTimer: 0, grabCooldown: 0 };
+// （抓捕者实例与状态在文件顶部统一声明）
 
 // 生成抓捕者（追捕者） - 巡逻者，遇到角色快速追击并抓捕
 function spawnChaser() {
@@ -758,10 +814,7 @@ function spawnChaser() {
     chaserMonster = null;
   }
 
-  var chaserType = MONSTER_TYPES['追捕者'];
-  var scaledT = scaleMonsterType(chaserType);
-  var g = buildMonsterMesh(scaledT);
-  if (scaledT.scale && scaledT.scale !== 1) g.scale.setScalar(scaledT.scale);
+  var g = buildChaserMesh();
 
   // 抓捕者初始位置在远离玩家的非中央房间
   var candidates = ROOMS.filter(function (r) { return !(r.cx === 0 && r.cz === 0); });
@@ -772,24 +825,288 @@ function spawnChaser() {
   scene.add(g);
 
   g.userData = {
-    radius: 0.9 * (scaledT.scale || 1),
+    radius: 0.9,
     active: true,
     walkPhase: 0,
-    type: scaledT,
-    baseType: chaserType,
-    isBoss: false,
+    type: { name: '追捕者', speed: 3.0, chaseSpeed: 7.0, hp: 500, scale: 1 },
     isChaser: true,
+    hp: 500,
     speedMul: 1,
     homeRoom: room,
     roamTimer: 0,
     wanderTarget: null,
-    chaseTimer: 0, // 追击计时器
     isChasing: false
   };
-  g.userData.hp = scaledT.hp;
   chaserMonster = g;
+  window.chaserMonster = g;
   chaserLeaveTimer = CHASER_LEAVE_DURATION;
   showMessage('👁️ 追捕者被释放了! 它在四处巡逻!', 0x4444ff);
+}
+
+// 构建恐怖人形追捕者 - 白色身体、血迹、长发、狰狞面容、长指甲
+function buildChaserMesh() {
+  var g = new THREE.Group();
+  var whiteMat = new THREE.MeshStandardMaterial({ color: 0xeeeedd, roughness: 0.7 });
+  var bloodMat = new THREE.MeshStandardMaterial({ color: 0xaa1111, roughness: 0.5, emissive: 0x440000, emissiveIntensity: 0.15 });
+  var darkMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 });
+  var hairMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 });
+  var nailMat = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.3, emissive: 0x111111 });
+
+  // 身体（白色瘦长）
+  var torso = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 1.0, 8), whiteMat);
+  torso.position.y = 0.9; torso.castShadow = true; g.add(torso);
+
+  // 血迹 - 身体上随机血斑
+  for (var bi = 0; bi < 6; bi++) {
+    var blood = new THREE.Mesh(new THREE.SphereGeometry(0.06 + Math.random() * 0.08, 5, 5), bloodMat);
+    blood.position.set((Math.random() - 0.5) * 0.6, 0.5 + Math.random() * 0.8, 0.35 + Math.random() * 0.1);
+    blood.scale.set(1, 1, 0.3);
+    g.add(blood);
+  }
+  // 大片血迹
+  var bigBlood = new THREE.Mesh(new THREE.CircleGeometry(0.2, 8), bloodMat);
+  bigBlood.position.set(0.1, 0.6, 0.4);
+  bigBlood.rotation.x = -0.5;
+  bigBlood.scale.set(1, 1, 0.2);
+  g.add(bigBlood);
+
+  // 破烂衣服碎片
+  var clothMat = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.9, transparent: true, opacity: 0.6 });
+  for (var ci = 0; ci < 4; ci++) {
+    var rag = new THREE.Mesh(new THREE.PlaneGeometry(0.15, 0.25 + Math.random() * 0.15), clothMat);
+    rag.position.set((Math.random() - 0.5) * 0.7, 0.4 + Math.random() * 0.6, 0.4);
+    rag.rotation.x = Math.random() * 0.5;
+    rag.rotation.z = (Math.random() - 0.5) * 0.3;
+    g.add(rag);
+  }
+
+  // 头
+  var head = new THREE.Mesh(new THREE.SphereGeometry(0.35, 10, 10), whiteMat);
+  head.position.y = 1.55; head.castShadow = true; g.add(head);
+
+  // 狰狞面容 - 深陷的眼窝
+  var socketMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
+  [[-0.14, 1.6, 0.32], [0.14, 1.6, 0.32]].forEach(function (p) {
+    var socket = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), socketMat);
+    socket.position.set(p[0], p[1], p[2]); g.add(socket);
+  });
+  // 血红发光眼睛
+  var eyeMat = new THREE.MeshStandardMaterial({ color: 0xff2200, emissive: 0xff0000, emissiveIntensity: 1.0 });
+  [[-0.14, 1.6, 0.36], [0.14, 1.6, 0.36]].forEach(function (p) {
+    var eye = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 8), eyeMat);
+    eye.position.set(p[0], p[1], p[2]); g.add(eye);
+    var pupil = new THREE.Mesh(new THREE.SphereGeometry(0.025, 6, 6), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    pupil.position.set(p[0], p[1], p[2] + 0.04); g.add(pupil);
+  });
+  // 狰狞的眉毛（倒八字，怒眉）
+  var browMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 });
+  [-0.14, 0.14].forEach(function (bx, idx) {
+    var brow = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.03, 0.03), browMat);
+    brow.position.set(bx, 1.68, 0.36);
+    brow.rotation.z = idx === 0 ? 0.4 : -0.4;
+    g.add(brow);
+  });
+  // 血泪痕迹
+  for (var ti = 0; ti < 3; ti++) {
+    var tear = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.005, 0.15 + Math.random() * 0.1, 4), bloodMat);
+    tear.position.set(-0.14 + Math.random() * 0.28, 1.5 - Math.random() * 0.15, 0.35);
+    g.add(tear);
+  }
+
+  // 嘴巴 - 裂开的大嘴
+  var mouthMat = new THREE.MeshStandardMaterial({ color: 0x110000, roughness: 0.9 });
+  var mouth = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 6), mouthMat);
+  mouth.position.set(0, 1.42, 0.36);
+  mouth.scale.set(1.2, 0.5, 0.5);
+  g.add(mouth);
+  // 牙齿
+  var toothMat = new THREE.MeshStandardMaterial({ color: 0xeeddcc, roughness: 0.2 });
+  for (var ti2 = 0; ti2 < 5; ti2++) {
+    var tx = -0.08 + ti2 * 0.04;
+    var tooth = new THREE.Mesh(new THREE.ConeGeometry(0.015, 0.04, 4), toothMat);
+    tooth.position.set(tx, 1.43, 0.41);
+    g.add(tooth);
+    var tooth2 = new THREE.Mesh(new THREE.ConeGeometry(0.015, 0.035, 4), toothMat);
+    tooth2.position.set(tx + 0.02, 1.39, 0.41);
+    tooth2.rotation.x = 0.3;
+    g.add(tooth2);
+  }
+
+  // 长发 - 使用多个圆柱体模拟飘逸长发
+  var hairLen = 0.5;
+  for (var hi = 0; hi < 12; hi++) {
+    var strand = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.005, hairLen + Math.random() * 0.2, 4), hairMat);
+    var angle = (hi / 12) * Math.PI * 2;
+    var radius = 0.3 + Math.random() * 0.08;
+    strand.position.set(Math.cos(angle) * radius, 1.45 - hairLen / 2, Math.sin(angle) * radius);
+    strand.rotation.x = (Math.random() - 0.5) * 0.3;
+    strand.rotation.z = (Math.cos(angle) * 0.2);
+    g.add(strand);
+  }
+  // 前面几缕头发（遮住部分脸）
+  for (var fi = 0; fi < 5; fi++) {
+    var fringe = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.004, 0.3 + Math.random() * 0.15, 4), hairMat);
+    fringe.position.set(-0.1 + Math.random() * 0.2, 1.5, 0.3 + Math.random() * 0.08);
+    fringe.rotation.x = 0.5 + Math.random() * 0.3;
+    g.add(fringe);
+  }
+
+  // 双臂（瘦长，白色）
+  var armMat = new THREE.MeshStandardMaterial({ color: 0xdddccc, roughness: 0.7 });
+  [-1, 1].forEach(function (side) {
+    var upperArm = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.5, 6), armMat);
+    upperArm.position.set(side * 0.5, 0.9, 0);
+    upperArm.rotation.z = side * 0.4;
+    g.add(upperArm);
+    var forearm = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.5, 6), armMat);
+    forearm.position.set(side * 0.72, 0.55, 0);
+    forearm.rotation.z = side * 0.5;
+    g.add(forearm);
+    // 手
+    var hand = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6), whiteMat);
+    hand.position.set(side * 0.85, 0.28, 0);
+    g.add(hand);
+    // 长指甲（3根）
+    for (var ni = 0; ni < 3; ni++) {
+      var nail = new THREE.Mesh(new THREE.ConeGeometry(0.012, 0.08, 4), nailMat);
+      nail.position.set(side * 0.85 + (ni - 1) * 0.03, 0.22, (ni - 1) * 0.03);
+      nail.rotation.x = 0.3;
+      nail.rotation.z = -side * 0.2;
+      g.add(nail);
+    }
+  });
+
+  // 双腿（瘦长，白色）
+  [-1, 1].forEach(function (side) {
+    var thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.4, 6), whiteMat);
+    thigh.position.set(side * 0.15, 0.25, 0);
+    g.add(thigh);
+    var calf = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.35, 6), whiteMat);
+    calf.position.set(side * 0.15, -0.1, 0);
+    g.add(calf);
+    // 脚
+    var foot = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.2), darkMat);
+    foot.position.set(side * 0.15, -0.28, 0.05);
+    g.add(foot);
+  });
+
+  // 全身血迹飞溅（小粒子）
+  for (var si = 0; si < 15; si++) {
+    var splat = new THREE.Mesh(new THREE.SphereGeometry(0.015 + Math.random() * 0.025, 4, 4), bloodMat);
+    splat.position.set((Math.random() - 0.5) * 0.8, Math.random() * 1.4, 0.3 + Math.random() * 0.1);
+    g.add(splat);
+  }
+
+  // 红色光晕
+  var glow = new THREE.Mesh(
+    new THREE.SphereGeometry(1.2, 10, 10),
+    new THREE.MeshBasicMaterial({ color: 0xff2222, transparent: true, opacity: 0.06, side: THREE.DoubleSide })
+  );
+  glow.position.y = 0.8;
+  g.add(glow);
+
+  g.scale.set(1.1, 1.1, 1.1);
+  return g;
+}
+
+// 抓捕者尝试抓住最近的玩家（主机权威）：主机→本地捕获；加入者→事件通知
+function tryChaserGrab(m, GRAB_RANGE) {
+  var bestPid = 'host';
+  var bestD = m.position.distanceTo(player.position);
+  if (GS.mode === 'multiplayer' && GS.isHost && typeof PeerManager !== 'undefined') {
+    for (var pid in PeerManager.players) {
+      if (pid === PeerManager.playerId) continue;
+      var pp = PeerManager.players[pid];
+      if (pp && pp.position && !pp.isCaptured) {
+        var dx = m.position.x - pp.position.x, dz = m.position.z - pp.position.z;
+        var d = Math.sqrt(dx * dx + dz * dz);
+        if (d < bestD) { bestD = d; bestPid = pid; }
+      }
+    }
+  }
+  if (bestD >= GRAB_RANGE) return;
+
+  if (bestPid === 'host') {
+    capturePlayer();
+    m.userData.captiveId = 'host';
+  } else {
+    // 抓住加入者：标记状态并通知该加入者，本地不动其位置（贴住即可）
+    var cp = PeerManager.players[bestPid];
+    cp.isCaptured = true;
+    cp._captureAck = false; // 等待加入者确认，防止在途 input 立即误解除
+    m.userData.captiveId = bestPid;
+    m.userData.deliveredToBoss = false;
+    m.userData.isChasing = false;
+    m.userData.captiveTimer = 0;
+    if (typeof PeerManager.sendTo === 'function') {
+      PeerManager.sendTo(bestPid, 'game_event', { event: 'player_captured', playerId: bestPid });
+    }
+    showMessage('🕸️ 追捕者抓住了 ' + (cp.name || '队友') + '!', 0xff8844);
+  }
+}
+
+// 主机端：抓捕者挟持加入者期间的表现（拖着加入者向Boss移动，等待其挣脱或死亡）
+function updateChaserHoldingJoiner(m, delta, GRAB_RANGE) {
+  var pid = m.userData.captiveId;
+  var p = (typeof PeerManager !== 'undefined' && PeerManager.players) ? PeerManager.players[pid] : null;
+
+  // 加入者离开 / 已挣脱(通过 input 上报 isCaptured=false) / 超时 → 解除挟持
+  m.userData.captiveTimer = (m.userData.captiveTimer || 0) + delta;
+  if (!p || !p.position || !p.isCaptured || m.userData.captiveTimer > 30) {
+    releaseChaserCaptive(m, p, true);
+    return;
+  }
+
+  // 与单机 captureState.captured 分支一致：抓捕者向 Boss 移动，加入者跟随抓捕者
+  var bossTarget = null;
+  for (var bIdx = 0; bIdx < bosses.length; bIdx++) {
+    if (bosses[bIdx].userData.active && bosses[bIdx].parent) { bossTarget = bosses[bIdx]; break; }
+  }
+  var dt = bossTarget ? { x: bossTarget.position.x, z: bossTarget.position.z }
+    : (lastBossSpawnRoom ? { x: lastBossSpawnRoom.cx, z: lastBossSpawnRoom.cz }
+      : { x: m.position.x, z: m.position.z });
+
+  var dragSpeed = ((m.userData.type && m.userData.type.speed) || 3.0) * 2.0 * delta;
+  var dDir = new THREE.Vector3(dt.x - m.position.x, 0, dt.z - m.position.z);
+  var dDist = dDir.length();
+  if (dDist > 3.0) {
+    dDir.normalize();
+    var dMove = dDir.clone().multiplyScalar(dragSpeed);
+    m.position.add(dMove);
+    m.rotation.y = Math.atan2(dMove.x, dMove.z);
+    m.userData.walkPhase = (m.userData.walkPhase || 0) + delta * 6;
+    // 拖着加入者跟随（在抓捕者身后1.5单位）——写入 p.position，快照会把它下发给加入者
+    p.position.x = m.position.x - dDir.x * 1.5;
+    p.position.z = m.position.z - dDir.z * 1.5;
+  }
+  m.position.y = groundY + Math.abs(Math.sin(m.userData.walkPhase || 0)) * 0.05;
+
+  // 挟持期间发光增强
+  m.children.forEach(function (child, idx) {
+    if (child.isMesh && child.material && child.material.emissive) {
+      child.material.emissiveIntensity = 0.5 + Math.sin(clock.elapsedTime * 5 + idx) * 0.3;
+    }
+  });
+}
+
+// 解除抓捕者对加入者的挟持（击退 + 冷却）；notify=true 时通知该加入者挣脱
+function releaseChaserCaptive(m, p, notify) {
+  var pid = m.userData.captiveId;
+  m.userData.captiveId = null;
+  m.userData.deliveredToBoss = false;
+  m.userData.isChasing = false;
+  m.userData.staggerTimer = 2.0;
+  m.userData.captiveTimer = 0;
+  captureState.grabCooldown = 12;
+  if (p) { p.isCaptured = false; p._captureAck = false; }
+  // 击退抓捕者
+  if (p && p.position) {
+    var kb = new THREE.Vector3(m.position.x - p.position.x, 0, m.position.z - p.position.z);
+    if (kb.length() > 0) { kb.normalize().multiplyScalar(6); m.position.add(kb); }
+  }
+  if (notify && pid && pid !== 'host' && typeof PeerManager !== 'undefined' && typeof PeerManager.sendTo === 'function') {
+    PeerManager.sendTo(pid, 'game_event', { event: 'player_rescued', playerId: pid });
+  }
 }
 
 // 抓捕者AI更新
@@ -798,33 +1115,71 @@ function updateChaser(delta) {
 
   var m = chaserMonster;
   var t = m.userData.type;
-  var dist = m.position.distanceTo(player.position);
+  // 联机主机端：抓捕者追踪最近的玩家（含加入者）；单机/加入者端为本地玩家
+  var _chaserTgt = (typeof nearestPlayerPos === 'function') ? nearestPlayerPos(m.position) : player.position;
+  var dist = m.position.distanceTo(_chaserTgt);
 
-  // 抓捕冷却
-  if (captureState.grabCooldown > 0) captureState.grabCooldown -= delta;
+  // 捆仙绳束缚：完全无法移动和抓捕
+  if (m.userData.boundTimer > 0) {
+    m.userData.boundTimer -= delta;
+    if (m.userData.bindRings) {
+      m.userData.bindRings.rotation.y += delta * 3;
+    }
+    return;
+  }
+
+  // 受击/挣脱硬直：原地眩晕（被抓状态下不生效，防止卡住拖拽）
+  if (!captureState.captured && m.userData.staggerTimer > 0) {
+    m.userData.staggerTimer -= delta;
+    return;
+  }
+
+  // （抓捕冷却统一在 updateCaptureSystem 中递减，此处不再重复扣减）
 
   var CHASE_RANGE = 18; // 发现玩家的距离
   var GRAB_RANGE = 1.8; // 抓捕距离
 
+  // ===== 联机主机端：抓捕者正挟持某个加入者 =====
+  if (GS.mode === 'multiplayer' && GS.isHost && m.userData.captiveId && m.userData.captiveId !== 'host') {
+    updateChaserHoldingJoiner(m, delta, GRAB_RANGE);
+    return;
+  }
+
   if (captureState.captured) {
-    // 被抓模式：怪物拖着玩家走
-    // 选择一个拖拽目标位置（远离初始位置，让玩家感受到被拖走）
-    if (!m.userData.dragTarget) {
-      // 随机选一个非中央的房间作为拖拽目标
-      var dragRooms = ROOMS.filter(function(r) { return !(r.cx === 0 && r.cz === 0); });
-      var targetRoom = dragRooms[Math.floor(Math.random() * dragRooms.length)];
-      m.userData.dragTarget = {
-        x: targetRoom.cx + (Math.random() - 0.5) * (roomSize - 12),
-        z: targetRoom.cz + (Math.random() - 0.5) * (roomSize - 12)
-      };
-      console.log('追捕者拖拽目标:', targetRoom.name, m.userData.dragTarget);
+    // 被抓模式：怪物拖着玩家前往Boss所在的房间
+    // 优先以存活Boss的实际位置为目标；没有Boss时退回随机游走
+    var bossTarget = null;
+    for (var bIdx = 0; bIdx < bosses.length; bIdx++) {
+      if (bosses[bIdx].userData.active && bosses[bIdx].parent) {
+        bossTarget = bosses[bIdx];
+        break;
+      }
     }
 
-    var dragSpeed = (t.speed || 3.0) * 2.5 * delta;
-    var dt = m.userData.dragTarget;
+    var dt;
+    if (bossTarget) {
+      dt = { x: bossTarget.position.x, z: bossTarget.position.z };
+    } else if (lastBossSpawnRoom) {
+      dt = { x: lastBossSpawnRoom.cx, z: lastBossSpawnRoom.cz };
+    } else {
+      // 没有Boss也没有Boss房间记录：随机选房间拖拽（原行为）
+      if (!m.userData.dragTarget || m.userData.dragChangeTimer <= 0) {
+        var targetRoom = ROOMS[Math.floor(Math.random() * ROOMS.length)];
+        m.userData.dragTarget = {
+          x: targetRoom.cx + (Math.random() - 0.5) * (roomSize - 12),
+          z: targetRoom.cz + (Math.random() - 0.5) * (roomSize - 12)
+        };
+        m.userData.dragChangeTimer = 3 + Math.random() * 2;
+      }
+      m.userData.dragChangeTimer -= delta;
+      dt = m.userData.dragTarget;
+    }
+
+    var dragSpeed = (t.speed || 3.0) * 2.0 * delta;
     var dDir = new THREE.Vector3(dt.x - m.position.x, 0, dt.z - m.position.z);
     var dDist = dDir.length();
-    if (dDist > 1.0) {
+    // 距离Boss/目标点3以上继续拖，否则原地按住玩家
+    if (dDist > 3.0) {
       dDir.normalize();
       var dMove = dDir.clone().multiplyScalar(dragSpeed);
       m.position.add(dMove);
@@ -835,9 +1190,10 @@ function updateChaser(delta) {
       player.position.x = m.position.x - dDir.x * 1.5;
       player.position.z = m.position.z - dDir.z * 1.5;
       player.position.y = groundY;
-    } else {
-      // 到达目标后重新选新目标
-      m.userData.dragTarget = null;
+    } else if (bossTarget && !m.userData.deliveredToBoss) {
+      // 已把玩家拖到Boss面前
+      m.userData.deliveredToBoss = true;
+      showMessage('👑 你被拖到了Boss面前! 快挣脱!', 0xff4444);
     }
 
     // 被抓时发光更强
@@ -858,20 +1214,53 @@ function updateChaser(delta) {
   }
 
   if (m.userData.isChasing) {
-    // 追击模式：快速接近玩家
-    var chaseSpeed = (t.chaseSpeed || 7.0) * delta;
-    var dir = new THREE.Vector3().subVectors(player.position, m.position);
+    // 追击模式：冲刺/冷却交替，给玩家逃跑机会
+    // 初始化冲刺计时器
+    if (m.userData.sprintTimer === undefined) m.userData.sprintTimer = 0;
+    if (m.userData.sprintCooldown === undefined) m.userData.sprintCooldown = 0;
+
+    // 冲刺冷却递减
+    if (m.userData.sprintCooldown > 0) {
+      m.userData.sprintCooldown -= delta;
+    }
+
+    // 冲刺计时递减
+    var isSprinting = m.userData.sprintTimer > 0;
+    if (isSprinting) {
+      m.userData.sprintTimer -= delta;
+    }
+
+    // 冲刺结束后进入冷却
+    if (!isSprinting && m.userData.sprintCooldown <= 0) {
+      // 开始新一轮冲刺（持续1.5秒）
+      m.userData.sprintTimer = 1.5;
+      m.userData.sprintCooldown = 5.0; // 5秒冷却
+      isSprinting = true;
+    }
+
+    var chaseSpeed;
+    if (isSprinting) {
+      // 冲刺速度：快速接近
+      chaseSpeed = (t.chaseSpeed || 7.0) * delta;
+      // 冲刺时显示警告
+      if (Math.random() < 0.02) showMessage('💨 追捕者冲刺中!', 0xff4444);
+    } else {
+      // 冷却中：缓慢移动（比巡逻稍快一点）
+      chaseSpeed = (t.speed || 3.0) * 0.8 * delta;
+    }
+
+    var dir = new THREE.Vector3().subVectors(_chaserTgt, m.position);
     dir.y = 0;
     if (dir.length() > 0) {
       var move = dir.clone().normalize().multiplyScalar(chaseSpeed);
       m.position.add(move);
       m.rotation.y = Math.atan2(move.x, move.z);
-      m.userData.walkPhase += delta * 10;
+      m.userData.walkPhase += delta * (isSprinting ? 10 : 4);
     }
 
-    // 检测抓捕
-    if (dist < GRAB_RANGE && captureState.grabCooldown <= 0) {
-      capturePlayer();
+    // 冲刺时抓捕最近的玩家（主机权威：可抓主机或加入者）
+    if (isSprinting && captureState.grabCooldown <= 0 && !m.userData.captiveId) {
+      tryChaserGrab(m, GRAB_RANGE);
     }
   } else {
     // 巡逻模式：随机游荡
@@ -898,24 +1287,33 @@ function updateChaser(delta) {
   // 呼吸起伏
   m.position.y = groundY + Math.abs(Math.sin(m.userData.walkPhase)) * 0.08;
 
-  // 发光动画
-  m.children.forEach(function (child, idx) {
-    if (child.isMesh && child.material && child.material.emissive) {
-      child.material.emissiveIntensity = 0.2 + Math.sin(clock.elapsedTime * 3 + idx) * 0.15;
-    }
-  });
+  // 发光动画（受击时闪白光优先）
+  if (m.userData.hitFlash > 0) {
+    m.userData.hitFlash -= delta;
+    m.children.forEach(function (child) {
+      if (child.isMesh && child.material && child.material.emissive) {
+        child.material.emissiveIntensity = 0.9;
+      }
+    });
+  } else {
+    m.children.forEach(function (child, idx) {
+      if (child.isMesh && child.material && child.material.emissive) {
+        child.material.emissiveIntensity = 0.2 + Math.sin(clock.elapsedTime * 3 + idx) * 0.15;
+      }
+    });
+  }
 }
 
 function initMonsters() {
-  monsters.forEach(function(m) { if (m.parent) scene.remove(m); });
+  monsters.forEach(function (m) { if (m.parent) scene.remove(m); });
   monsters = [];
-  bosses.forEach(function(b) { if (b.parent) scene.remove(b); });
+  bosses.forEach(function (b) { if (b.parent) scene.remove(b); });
   bosses = [];
 
   var chd = currentChapterData();
 
   // 随机选一个非中央房间生成小怪
-  var candidates = ROOMS.filter(function(r) { return !(r.cx === 0 && r.cz === 0); });
+  var candidates = ROOMS.filter(function (r) { return !(r.cx === 0 && r.cz === 0); });
   var spawnRoom = candidates[Math.floor(Math.random() * candidates.length)];
   lastMonsterSpawnRoom = spawnRoom;
 
@@ -925,7 +1323,7 @@ function initMonsters() {
 
   var g = buildMonsterMesh(scaledT);
   if (scaledT.scale && scaledT.scale !== 1) g.scale.setScalar(scaledT.scale);
-  
+
   var x = spawnRoom.cx + (Math.random() - 0.5) * (roomSize - 12);
   var z = spawnRoom.cz + (Math.random() - 0.5) * (roomSize - 12);
   g.position.set(x, groundY, z);
@@ -955,7 +1353,7 @@ function initMonsters() {
   }
 
   // Boss在金色宝箱刷新时生成，不在init时生成
-  
+
   centerRoomMonsterTimer = 30;
   centerRoomMonstersSpawned = true; // 不再额外刷怪：全场只有1只小怪+1只Boss
 
@@ -971,11 +1369,11 @@ function spawnCenterRoomMonsters() {
   var centerRoom = ROOMS[0];
   var t = pickMinionType();
   var scaledT = scaleMonsterType(t);
-  
+
   // 中央房间刷1只怪物
   var g = buildMonsterMesh(scaledT);
   if (scaledT.scale && scaledT.scale !== 1) g.scale.setScalar(scaledT.scale);
-  
+
   var x = centerRoom.cx + (Math.random() - 0.5) * (roomSize - 12);
   var z = centerRoom.cz + (Math.random() - 0.5) * (roomSize - 12);
   if (Math.abs(x) < 6) x = x < 0 ? -8 : 8;
@@ -1009,17 +1407,17 @@ function spawnCenterRoomMonsters() {
 function respawnMonster(m) {
   var baseT = pickMinionType();
   var t = scaleMonsterType(baseT);
-  
+
   // 选择一个与上次不同的房间
-  var candidates = ROOMS.filter(function(r) { 
-    return r !== lastMonsterSpawnRoom; 
+  var candidates = ROOMS.filter(function (r) {
+    return r !== lastMonsterSpawnRoom;
   });
   if (candidates.length === 0) candidates = ROOMS;
   var rm = candidates[Math.floor(Math.random() * candidates.length)];
-  
+
   var g = buildMonsterMesh(t);
   if (t.scale && t.scale !== 1) g.scale.setScalar(t.scale);
-  
+
   var x = rm.cx + (Math.random() - 0.5) * (roomSize - 12);
   var z = rm.cz + (Math.random() - 0.5) * (roomSize - 12);
   g.position.set(x, groundY, z);
@@ -1056,6 +1454,7 @@ function respawnMonster(m) {
 // 道具系统
 // ============================================================
 var items = [];
+var normalChests = [];
 
 var ITEM_TYPES = [
   {
@@ -1124,6 +1523,12 @@ var ITEM_TYPES = [
     }
   },
   {
+    id: 'chest', name: '普通宝盒', icon: '🎁', color: 0xaa77ff,
+    desc: '答题解锁：随机1-3个能量碎片+1件武器',
+    isChest: true,
+    apply: function () { } // 宝盒不即时生效，走答题流程
+  },
+  {
     id: 'flashlight', name: '手电筒', icon: '🔦', color: 0xffff44,
     desc: '开启手电筒增加视线距离',
     apply: function () {
@@ -1149,41 +1554,66 @@ function buildItemMesh(itemType) {
   var g = new THREE.Group();
   var color = itemType.color;
 
+  if (itemType.id === 'chest') {
+    // 普通宝盒 - 紫色小箱子（比金色宝箱小，颜色区分）
+    var boxMat = new THREE.MeshStandardMaterial({ color: 0x7755cc, metalness: 0.4, roughness: 0.5, emissive: 0x5533aa, emissiveIntensity: 0.25 });
+    var darkMat = new THREE.MeshStandardMaterial({ color: 0x553399, metalness: 0.4, roughness: 0.5 });
+    var body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.35, 0.42), boxMat);
+    body.position.y = 0.18; g.add(body);
+    var lid = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.21, 0.6, 10, 1, false, 0, Math.PI), darkMat);
+    lid.rotation.z = Math.PI / 2;
+    lid.position.y = 0.36; g.add(lid);
+    var trimMat = new THREE.MeshStandardMaterial({ color: 0xcc99ff, metalness: 0.8, roughness: 0.2, emissive: 0xaa77ff, emissiveIntensity: 0.4 });
+    var lock = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 0.05), trimMat);
+    lock.position.set(0, 0.26, 0.22); g.add(lock);
+    var glow = new THREE.Mesh(
+      new THREE.SphereGeometry(0.5, 8, 8),
+      new THREE.MeshBasicMaterial({ color: 0xaa77ff, transparent: true, opacity: 0.12, side: THREE.DoubleSide })
+    );
+    glow.position.y = 0.25; g.add(glow);
+    var ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.4, 0.02, 6, 16),
+      new THREE.MeshBasicMaterial({ color: 0xaa77ff, transparent: true, opacity: 0.4 })
+    );
+    ring.rotation.x = Math.PI / 2; g.add(ring);
+    return g;
+  }
+
   if (itemType.id === 'weapon') {
     // 武器道具以武器的形态展示 - 剑的造型
     var bladeMat = new THREE.MeshStandardMaterial({ color: 0xccccff, emissive: 0x4488ff, emissiveIntensity: 0.3, metalness: 0.8, roughness: 0.2 });
     var handleMat = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.7 });
     var guardMat = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.6, roughness: 0.3 });
-    
+
     var blade = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.6, 0.02), bladeMat);
     blade.position.y = 0.4;
     g.add(blade);
-    
+
     var tip = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.15, 6), bladeMat);
     tip.position.y = 0.78;
     g.add(tip);
-    
+
     var guard = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.03, 0.04), guardMat);
     guard.position.y = 0.1;
     g.add(guard);
-    
+
     var handle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.15, 6), handleMat);
     handle.position.y = -0.02;
     g.add(handle);
-    
+
     var glow = new THREE.Mesh(
       new THREE.SphereGeometry(0.4, 8, 8),
       new THREE.MeshBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.12, side: THREE.DoubleSide })
     );
     g.add(glow);
-    
+
     var ring = new THREE.Mesh(
       new THREE.TorusGeometry(0.35, 0.02, 6, 16),
       new THREE.MeshBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.4 })
     );
     ring.rotation.x = Math.PI / 2;
     g.add(ring);
-    
+
     return g;
   }
 
@@ -1326,8 +1756,8 @@ function spawnItemsInRoom(rm) {
       }
       itemType = weaponType || ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
     } else {
-      // 同一房间内同一道具不能同时存在大于2个
-      var allowed = ITEM_TYPES.filter(function (t) { return (typeCounts[t.id] || 0) < 2; });
+      // 同一房间内同一道具不能同时存在大于2个（宝盒由独立系统管理，不走随机池）
+      var allowed = ITEM_TYPES.filter(function (t) { return !t.isChest && (typeCounts[t.id] || 0) < 2; });
       if (allowed.length === 0) break;
       itemType = allowed[Math.floor(Math.random() * allowed.length)];
     }
@@ -1340,7 +1770,12 @@ function spawnItemsInRoom(rm) {
     }
     var mesh = buildItemMesh(itemType);
     mesh.position.set(x, 1.0, z);
+    // 联机模式：赋予唯一 netId，用于主机快照同步
+    if (!mesh.userData.netId) {
+      mesh.userData.netId = 'i_' + Math.random().toString(36).substr(2, 8);
+    }
     mesh.userData = {
+      netId: mesh.userData.netId,
       itemType: itemType,
       active: true,
       floatPhase: Math.random() * Math.PI * 2,
@@ -1351,7 +1786,163 @@ function spawnItemsInRoom(rm) {
   }
 }
 
+// ============================================================
+// 普通宝盒独立刷新系统
+// 全场同时最多5个；只刷在房间墙角；不刷在Boss房间和金色宝箱房间；
+// 每个宝盒答题一次（无论对错）即销毁，30秒后随机换其他房间补刷
+// ============================================================
+var CHEST_MAX_COUNT = 5;
+
+function chestTypeDef() {
+  for (var i = 0; i < ITEM_TYPES.length; i++) {
+    if (ITEM_TYPES[i].isChest) return ITEM_TYPES[i];
+  }
+  return null;
+}
+
+function countChests() {
+  var n = 0;
+  normalChests.forEach(function (it) {
+    if (it.userData.itemType && it.userData.itemType.isChest && it.userData.active) n++;
+  });
+  return n;
+}
+
+function roomOfPosition(pos) {
+  for (var ri = 0; ri < ROOMS.length; ri++) {
+    if (Math.abs(pos.x - ROOMS[ri].cx) < roomSize / 2 &&
+      Math.abs(pos.z - ROOMS[ri].cz) < roomSize / 2) {
+      return ROOMS[ri];
+    }
+  }
+  return null;
+}
+
+// 宝盒可刷新的房间：排除Boss所在房间、金色宝箱所在房间、已有宝盒的房间（防重叠）、指定房间（刚销毁的那间）
+function chestEligibleRooms(excludeRoom) {
+  return ROOMS.filter(function (r) {
+    if (excludeRoom && r === excludeRoom) return false;
+    // 排除金色宝箱所在房间
+    if (energyOrb) {
+      var grIdx = roomIndexOf(energyOrb.position.x, energyOrb.position.z);
+      if (grIdx !== -1 && r === ROOMS[grIdx]) return false;
+    }
+    // 该房间已有宝盒则不再刷（每房间最多1个，避免同角重叠连续触发答题）
+    for (var ii = 0; ii < normalChests.length; ii++) {
+      var it = normalChests[ii];
+      if (it.userData.itemType && it.userData.itemType.isChest &&
+        Math.abs(it.position.x - r.cx) < roomSize / 2 &&
+        Math.abs(it.position.z - r.cz) < roomSize / 2) return false;
+    }
+    for (var bi = 0; bi < bosses.length; bi++) {
+      var b = bosses[bi];
+      if (!b.userData.active) continue;
+      if (Math.abs(b.position.x - r.cx) < roomSize / 2 &&
+        Math.abs(b.position.z - r.cz) < roomSize / 2) return false;
+    }
+    return true;
+  });
+}
+
+function spawnChest(excludeRoom) {
+  if (countChests() >= CHEST_MAX_COUNT) return;
+  var ct = chestTypeDef();
+  if (!ct) return;
+
+  var eligible = chestEligibleRooms(excludeRoom);
+  if (eligible.length === 0) eligible = chestEligibleRooms(null);
+  if (eligible.length === 0) return;
+  var rm = eligible[Math.floor(Math.random() * eligible.length)];
+
+  // 固定刷新在房间墙角（四角随机选一个，微小偏移避免完全重叠）
+  var cornerOff = halfRoom - 3; // 距墙3个单位，避免嵌墙
+  var corners = [
+    [-cornerOff, -cornerOff], [cornerOff, -cornerOff],
+    [-cornerOff, cornerOff], [cornerOff, cornerOff]
+  ];
+  var c = corners[Math.floor(Math.random() * corners.length)];
+  var x = rm.cx + c[0] + (Math.random() - 0.5) * 1.5;
+  var z = rm.cz + c[1] + (Math.random() - 0.5) * 1.5;
+
+  var mesh = buildItemMesh(ct);
+  mesh.position.set(x, 1.0, z);
+  // 联机模式：赋予唯一 netId
+  if (!mesh.userData.netId) {
+    mesh.userData.netId = 'c_' + Math.random().toString(36).substr(2, 8);
+  }
+  mesh.userData = {
+    netId: mesh.userData.netId,
+    itemType: ct,
+    active: true,
+    floatPhase: Math.random() * Math.PI * 2,
+    rotSpeed: 1 + Math.random() * 0.5
+  };
+  scene.add(mesh);
+  normalChests.push(mesh);
+}
+
+// 初始铺满5个宝盒
+function spawnInitialChests() {
+  for (var i = 0; i < CHEST_MAX_COUNT; i++) spawnChest(null);
+}
+
+// 销毁宝盒（答题后无论对错都调用）：显示盖子打开状态，30秒后移除并补刷
+function destroyChestItem(it) {
+  if (!it || it.userData.destroyed) return;
+  it.userData.destroyed = true;
+  it.userData.active = false;
+
+  // 视觉：打开盖子
+  if (it.children.length >= 5) {
+    var lid = it.children[1]; // 盖子
+    if (lid) lid.rotation.x = -Math.PI * 0.5;
+    var lock = it.children[2]; // 锁
+    if (lock) lock.visible = false;
+    var glow = it.children[3]; // 光晕
+    if (glow && glow.material) glow.material.opacity = 0.04;
+    var ring = it.children[4]; // 光环
+    if (ring) ring.visible = false;
+  }
+
+  var fromRoom = roomOfPosition(it.position);
+
+  // 30秒后：移除已打开的空宝箱，在其他房间补刷新宝箱
+  var tryRespawn = function () {
+    if (GS.gameOver) return;
+    // 游戏暂停中（如答题界面未关），延后重试，宝盒不丢失
+    if (!GS.running) { setTimeout(tryRespawn, 2000); return; }
+    // 移除打开的宝箱
+    var idx = normalChests.indexOf(it);
+    if (idx !== -1) normalChests.splice(idx, 1);
+    if (it.parent) scene.remove(it);
+    spawnChest(fromRoom);
+    // 联机模式：主机广播宝箱重生通知
+    if (GS.mode === 'multiplayer' && GS.isHost && typeof PeerManager !== 'undefined') {
+      PeerManager.broadcast('chest_refresh', {
+        fromRoomCx: fromRoom ? fromRoom.cx : null,
+        fromRoomCz: fromRoom ? fromRoom.cz : null
+      });
+    }
+  };
+  setTimeout(tryRespawn, 30000);
+}
+
 function updateItems(delta) {
+  // 联机加入者模式：跳过本地拾取，只更新动画
+  if (GS.mode === 'multiplayer' && !GS.isHost) {
+    for (var si = 0; si < items.length; si++) {
+      var sit = items[si];
+      if (!sit.userData.active) continue;
+      sit.position.y = 1.0 + Math.sin(clock.elapsedTime * 2 + sit.userData.floatPhase) * 0.2;
+      sit.rotation.y += delta * sit.userData.rotSpeed;
+    }
+    return;
+  }
+
+  // 答题期间跳过所有物品交互，防止重复触发
+  var quizOverlay = document.getElementById('quiz-overlay');
+  var quizActive = quizOverlay && quizOverlay.style.display === 'flex';
+  
   for (var i = 0; i < items.length; i++) {
     var it = items[i];
     if (!it.userData.active) continue;
@@ -1361,8 +1952,9 @@ function updateItems(delta) {
       var ring = it.children[2];
       if (ring) ring.rotation.z += delta * 2;
     }
-    if (player && player.position.distanceTo(it.position) < 1.5) {
+    if (player && !quizActive && !window.currentQuizChest && player.position.distanceTo(it.position) < 1.5) {
       var itemType = it.userData.itemType;
+
       itemType.apply();
       for (var j = 0; j < 12; j++) {
         (function () {
@@ -1383,7 +1975,7 @@ function updateItems(delta) {
       var pickRoom = null;
       for (var ri = 0; ri < ROOMS.length; ri++) {
         if (Math.abs(it.position.x - ROOMS[ri].cx) < roomSize / 2 &&
-            Math.abs(it.position.z - ROOMS[ri].cz) < roomSize / 2) {
+          Math.abs(it.position.z - ROOMS[ri].cz) < roomSize / 2) {
           pickRoom = ROOMS[ri];
           break;
         }
@@ -1392,13 +1984,30 @@ function updateItems(delta) {
       items.splice(i, 1);
       i--;
       updateHUD();
+
+      // 联机模式：主机广播道具拾取事件，通知加入者该房间将有新道具刷新
+      if (GS.mode === 'multiplayer' && GS.isHost && typeof PeerManager !== 'undefined') {
+        PeerManager.broadcast('item_pickup_sync', {
+          roomCx: pickRoom ? pickRoom.cx : 0,
+          roomCz: pickRoom ? pickRoom.cz : 0,
+          itemType: itemType.id
+        });
+      }
+
       if (pickRoom) {
-        (function (room) {
+        (function (room, roomCx, roomCz) {
           // 普通道具刷新时间：10秒
           setTimeout(function () {
             spawnItemsInRoom(room);
+            // 联机模式：主机广播道具刷新通知
+            if (GS.mode === 'multiplayer' && GS.isHost && typeof PeerManager !== 'undefined') {
+              PeerManager.broadcast('item_refresh', {
+                roomCx: roomCx,
+                roomCz: roomCz
+              });
+            }
           }, 10000);
-        })(pickRoom);
+        })(pickRoom, pickRoom.cx, pickRoom.cz);
       }
     }
   }
@@ -1416,13 +2025,13 @@ function toggleFlashlight() {
     showMessage('⏳ 手电筒冷却中 (' + Math.ceil(flashlightCooldown) + 's)', 0xffff44);
     return;
   }
-  
+
   flashlightActive = !flashlightActive;
-  
+
   if (flashlightActive) {
     flashlightDuration = FLASHLIGHT_MAX_DURATION;
     showMessage('🔦 手电筒开启! 持续' + FLASHLIGHT_MAX_DURATION + '秒', 0xffff44);
-    
+
     if (!flashlightSpotLight) {
       flashlightSpotLight = new THREE.SpotLight(0xffffcc, 2);
       flashlightSpotLight.angle = 0.4;
@@ -1431,10 +2040,10 @@ function toggleFlashlight() {
       flashlightSpotLight.distance = 25;
       flashlightSpotLight.castShadow = true;
       scene.add(flashlightSpotLight);
-      
-      var coneMat = new THREE.MeshBasicMaterial({ 
-        color: 0xffffcc, 
-        transparent: true, 
+
+      var coneMat = new THREE.MeshBasicMaterial({
+        color: 0xffffcc,
+        transparent: true,
         opacity: 0.05,
         side: THREE.DoubleSide
       });
@@ -1443,9 +2052,9 @@ function toggleFlashlight() {
       cone.position.z = -6;
       flashlightSpotLight.add(cone);
     }
-    
+
     scene.fog = new THREE.Fog(scene.background.getHex(), 15, 30);
-    
+
     if (!GS._flashlightAmbient) {
       GS._flashlightAmbient = new THREE.AmbientLight(0xffffcc, 0.15);
       scene.add(GS._flashlightAmbient);
@@ -1453,15 +2062,15 @@ function toggleFlashlight() {
   } else {
     showMessage('🔦 手电筒关闭', 0xffff44);
     flashlightCooldown = FLASHLIGHT_COOLDOWN;
-    
+
     if (flashlightSpotLight) {
       scene.remove(flashlightSpotLight);
       flashlightSpotLight = null;
     }
-    
+
     var chd = currentChapterData();
     scene.fog = new THREE.Fog(chd.fogColor, 8, 13);
-    
+
     if (GS._flashlightAmbient) {
       scene.remove(GS._flashlightAmbient);
       GS._flashlightAmbient = null;
@@ -1474,14 +2083,14 @@ function updateFlashlight(delta) {
     flashlightCooldown -= delta;
     if (flashlightCooldown < 0) flashlightCooldown = 0;
   }
-  
+
   if (flashlightActive) {
     flashlightDuration -= delta;
     if (flashlightDuration <= 0) {
       flashlightDuration = 0;
       flashlightActive = false;
       flashlightCooldown = FLASHLIGHT_COOLDOWN;
-      
+
       if (flashlightSpotLight) {
         scene.remove(flashlightSpotLight);
         flashlightSpotLight = null;
@@ -1506,7 +2115,7 @@ function updateFlashlight(delta) {
       }
     }
   }
-  
+
   var flashlightBtn = document.getElementById('btn-flashlight');
   if (flashlightBtn) {
     if (GS.hasFlashlight) {
@@ -1713,12 +2322,15 @@ function updateMonsterHPBar() {
   var monsterHpEl = document.getElementById('monster-hp');
   var fillEl = document.getElementById('monster-hp-fill');
   var labelEl = document.querySelector('#monster-hp .label');
-  
+
   if (!monsterHpEl || !fillEl) return;
-  
+
   var allActive = monsters.concat(bosses);
+  if (chaserMonster && chaserMonster.parent && chaserMonster.userData.active) {
+    allActive.push(chaserMonster);
+  }
   var closest = null, closestDist = 999;
-  allActive.forEach(function(m) {
+  allActive.forEach(function (m) {
     if (!m.userData.active) return;
     var d = player.position.distanceTo(m.position);
     if (d < closestDist && d < 15) {
@@ -1726,14 +2338,14 @@ function updateMonsterHPBar() {
       closest = m;
     }
   });
-  
+
   if (closest && closest.userData.active) {
     var t = closest.userData.type || {};
     var hp = closest.userData.hp || 0;
     var maxHp = t.hp || 100;
     var pct = Math.max(0, (hp / maxHp * 100));
     fillEl.style.width = pct + '%';
-    labelEl.textContent = '👾 ' + (t.name || '怪物') + ' HP: ' + Math.ceil(hp) + '/' + maxHp;
+    if (labelEl) labelEl.textContent = '👾 ' + (t.name || '怪物') + ' HP: ' + Math.ceil(hp) + '/' + maxHp;
     monsterHpEl.style.display = 'block';
   } else {
     monsterHpEl.style.display = 'none';
@@ -1750,7 +2362,7 @@ function capturePlayer() {
   captureState.captured = true;
   captureState.tapCount = 0;
   captureState.dmgTimer = 0;
-  captureState.grabCooldown = 15; // 15秒内不会再次被抓
+  // 注意：冷却在挣脱/送达时设置，被抓瞬间不设（否则挣脱快时冷却反而先走完）
 
   // 显示挣脱进度条
   var bar = document.getElementById('capture-bar');
@@ -1760,18 +2372,24 @@ function capturePlayer() {
   var attackBtn = document.getElementById('btn-attack');
   if (attackBtn) attackBtn.classList.add('capture-mode');
 
+  // 被抓紫晕脉动
+  var vig = document.getElementById('hit-vignette');
+  if (vig) vig.classList.add('captured');
+
   // 更新UI
   updateCaptureUI();
 
   // 玩家不能移动
   // 播放被抓动画效果
   if (chaserMonster && chaserMonster.parent) {
-    // 清除之前的拖拽目标，让抓捕者开始拖拽
+    // 清除之前的拖拽目标，开始拖向Boss房间
     chaserMonster.userData.dragTarget = null;
+    chaserMonster.userData.deliveredToBoss = false;
     chaserMonster.userData.isChasing = false;
   }
-  showMessage('🕸️ 追捕者正拖着你离开! 快点击攻击挣脱!', 0xff4444);
+  showMessage('🕸️ 追捕者正拖着你去Boss房间! 快点击攻击挣脱!', 0xff4444);
   AudioMgr.playHurt();
+  if (navigator.vibrate) { try { navigator.vibrate([80, 40, 80]); } catch (e) { } }
 }
 
 function updateCaptureUI() {
@@ -1786,10 +2404,12 @@ function onCaptureTap() {
   if (!captureState.captured) return;
 
   captureState.tapCount++;
+  captureState.tapDecayTimer = 0; // 点击重置衰减计时
   updateCaptureUI();
 
-  // 点击反馈
+  // 点击反馈：音效+震动（移动端）
   AudioMgr.playHit();
+  if (navigator.vibrate) { try { navigator.vibrate(30); } catch (e) { } }
 
   if (captureState.tapCount >= captureState.maxTap) {
     // 挣脱成功
@@ -1799,6 +2419,9 @@ function onCaptureTap() {
 
 function breakFreeFromCapture() {
   captureState.captured = false;
+  captureState.tapCount = 0;
+  // 挣脱后给2.5秒加速逃跑窗口
+  captureState.escapeBoostTimer = 2.5;
 
   // 隐藏进度条
   var bar = document.getElementById('capture-bar');
@@ -1808,7 +2431,11 @@ function breakFreeFromCapture() {
   var attackBtn = document.getElementById('btn-attack');
   if (attackBtn) attackBtn.classList.remove('capture-mode');
 
-  showMessage('💪 挣脱成功! 快跑!', 0x44ff88);
+  // 关闭被抓紫晕
+  var vig = document.getElementById('hit-vignette');
+  if (vig) vig.classList.remove('captured');
+
+  showMessage('💪 挣脱成功! 抓紧时间快跑!', 0x44ff88);
   AudioMgr.playSkill();
 
   // 重置离开计时器（挣脱后抓捕者还会多待一会儿）
@@ -1819,39 +2446,58 @@ function breakFreeFromCapture() {
     var knockback = new THREE.Vector3().subVectors(chaserMonster.position, player.position);
     knockback.y = 0;
     if (knockback.length() > 0) {
-      knockback.normalize().multiplyScalar(5);
+      knockback.normalize().multiplyScalar(6);
       chaserMonster.position.add(knockback);
     }
-    // 抓捕者被击退后短暂眩晕，不追击
+    // 抓捕者被击退后眩晕2秒，且短时间内不再追击/抓捕
     chaserMonster.userData.isChasing = false;
-    captureState.grabCooldown = 10; // 10秒内不会再次被抓
+    chaserMonster.userData.deliveredToBoss = false;
+    chaserMonster.userData.captiveId = null;
+    chaserMonster.userData.staggerTimer = 2.0;
   }
+  // 统一冷却：挣脱后12秒内不会再次被抓
+  captureState.grabCooldown = 12;
 }
 
 // 在update中处理抓捕者相关逻辑
 function updateCaptureSystem(delta) {
-  // 抓捕者离开计时器（只在非抓捕状态时倒计时）
+  // 抓捕者离开计时器（只在非抓捕状态时倒计时，加入者由主机快照同步）
   if (!captureState.captured && chaserMonster && chaserMonster.parent) {
-    chaserLeaveTimer -= delta;
-    if (chaserLeaveTimer <= 0) {
-      // 抓捕者自动离开
-      if (chaserMonster && chaserMonster.parent) {
-        scene.remove(chaserMonster);
-        chaserMonster = null;
-      }
-      showMessage('👋 追捕者离开了，稍后会重新出现', 0x8888ff);
-      // 30秒后重新生成
-      setTimeout(function () {
-        if (GS.running && !GS.gameOver) {
-          spawnChaser();
+    // 加入者不管理抓捕者生命周期，由主机快照同步控制
+    if (GS.mode === 'multiplayer' && !GS.isHost) {
+      // 跳过
+    } else {
+      chaserLeaveTimer -= delta;
+      if (chaserLeaveTimer <= 0) {
+        // 抓捕者自动离开
+        if (chaserMonster && chaserMonster.parent) {
+          scene.remove(chaserMonster);
+          chaserMonster = null;
+          window.chaserMonster = null;
         }
-      }, CHASER_RESPAWN_DELAY * 1000);
-      return;
+        showMessage('👋 追捕者离开了，稍后会重新出现', 0x8888ff);
+        // 30秒后重新生成
+        setTimeout(function () {
+          if (GS.running && !GS.gameOver) {
+            spawnChaser();
+          }
+        }, CHASER_RESPAWN_DELAY * 1000);
+        return;
+      }
     }
   }
 
-  // 被抓期间持续掉血
+  // 被抓期间持续掉血 + 挣脱进度缓慢衰减（制造拉扯对抗感）
   if (captureState.captured) {
+    // 联机加入者端：贴着本地抓捕者模型移动（模拟被拖拽效果）
+    if (GS.mode === 'multiplayer' && !GS.isHost && typeof chaserMonster !== 'undefined' && chaserMonster && chaserMonster.parent && player) {
+      var _cDir = new THREE.Vector3(chaserMonster.position.x - player.position.x, 0, chaserMonster.position.z - player.position.z);
+      if (_cDir.length() > 1.5) {
+        _cDir.normalize();
+        player.position.x = chaserMonster.position.x - _cDir.x * 1.5;
+        player.position.z = chaserMonster.position.z - _cDir.z * 1.5;
+      }
+    }
     captureState.dmgTimer += delta;
     if (captureState.dmgTimer >= 1.0) {
       captureState.dmgTimer = 0;
@@ -1865,10 +2511,28 @@ function updateCaptureSystem(delta) {
         if (bar) bar.classList.add('hidden');
         var attackBtn = document.getElementById('btn-attack');
         if (attackBtn) attackBtn.classList.remove('capture-mode');
+        var vig = document.getElementById('hit-vignette');
+        if (vig) vig.classList.remove('captured');
         showGameOver();
       }
       updateHUD();
     }
+    // 每1.2秒不点击就掉1点挣脱进度（最多掉到0），点得慢就挣不脱
+    captureState.tapDecayTimer += delta;
+    if (captureState.tapDecayTimer >= 1.2) {
+      captureState.tapDecayTimer = 0;
+      if (captureState.tapCount > 0) {
+        captureState.tapCount--;
+        updateCaptureUI();
+      }
+    }
+  } else {
+    captureState.tapDecayTimer = 0;
+  }
+
+  // 挣脱后加速逃跑窗口递减
+  if (captureState.escapeBoostTimer > 0) {
+    captureState.escapeBoostTimer -= delta;
   }
 
   // 抓捕者冷却
@@ -1876,6 +2540,15 @@ function updateCaptureSystem(delta) {
     captureState.grabCooldown -= delta;
   }
 
-  // 更新抓捕者AI
-  updateChaser(delta);
+  // 更新抓捕者AI（加入者跳过，由主机权威执行）
+  if (GS.mode !== 'multiplayer' || GS.isHost) {
+    updateChaser(delta);
+  }
 }
+
+// 导出到全局
+window.initScene = initScene;
+window.spawnChaser = spawnChaser;
+window.capturePlayer = capturePlayer;
+window.breakFreeFromCapture = breakFreeFromCapture;
+window.captureState = captureState;

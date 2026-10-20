@@ -78,7 +78,23 @@ function setupTouchControls() {
         document.getElementById(id).addEventListener('touchstart', function (e) { e.preventDefault(); fn(); }, { passive: false });
     }
     bindBtn('btn-attack', attack);
-    bindBtn('btn-jump', tryJump);
+
+    // 跳跃键要额外记录"按住"状态：爸爸的飞行技能靠按住它来继续爬升，
+    // 原来只有 touchstart 一次回调，飞行时手指按着也没人知道。
+    var jumpBtn = document.getElementById('btn-jump');
+    if (jumpBtn) {
+        jumpBtn.addEventListener('touchstart', function (e) {
+            e.preventDefault();
+            if (typeof keys !== 'undefined') keys[' '] = true;
+            tryJump();
+        }, { passive: false });
+        var jumpEnd = function (e) {
+            e.preventDefault();
+            if (typeof keys !== 'undefined') keys[' '] = false;
+        };
+        jumpBtn.addEventListener('touchend', jumpEnd, { passive: false });
+        jumpBtn.addEventListener('touchcancel', jumpEnd, { passive: false });
+    }
     bindBtn('btn-skill', useSkill);
     bindBtn('btn-flashlight', toggleFlashlight);
 

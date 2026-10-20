@@ -15,9 +15,53 @@ function getCharName() {
   return GS.character === 'qike' ? '奇奇' : '妙妙';
 }
 
-function showQuiz() {
+// 随机发放一件未拥有的武器（全拥有则补星星），返回奖励文本
+function grantRandomWeapon() {
+  var lockedW = REWARD_WEAPON_LIST.filter(function (n) { return !GS.weapons[n] });
+  if (lockedW.length > 0) {
+    var wn = lockedW[Math.floor(Math.random() * lockedW.length)];
+    GS.weapons[wn] = WEAPONS[wn];
+    GS.weaponAmmo[wn] = WEAPONS[wn].type === 'rope' ? 1 : 20;
+    GS.weaponCount++;
+    if (!GS.curWeapon) GS.curWeapon = wn;
+    updateWeaponBar();
+    createWeaponGetEffect();
+    return WEAPONS[wn].icon + ' ' + wn;
+  }
+  // 已拥有全部武器：随机重置一把的弹药
+  var ownedW = REWARD_WEAPON_LIST.filter(function (n) { return GS.weapons[n] });
+  if (ownedW.length > 0) {
+    var rn = ownedW[Math.floor(Math.random() * ownedW.length)];
+    GS.weaponAmmo[rn] = WEAPONS[rn].type === 'rope' ? 1 : 20;
+    updateWeaponBar();
+    return '🔄 ' + rn + ' 弹药重置';
+  }
+  GS.stars += 10;
+  return '⭐ 星星+10';
+}
+
+// 当前正在答题的宝箱（防止重复触发）- 全局变量
+window.currentQuizChest = null;
+
+// chestItem 为空 = 金色宝箱(答对+3能量); 传入普通宝盒道具 = 答对开出1-3碎片+1武器
+function showQuiz(chestItem) {
   var overlay = document.getElementById('quiz-overlay');
   if (overlay.style.display === 'flex') return;
+
+  // 防止重复答题：如果已有正在答题的宝箱，直接返回
+  if (window.currentQuizChest && !chestItem) return; // 金色宝箱不能与普通宝箱同时答题
+  if (window.currentQuizChest && window.currentQuizChest !== chestItem) return; // 不同宝箱不能同时答题
+
+  var isGolden = !chestItem;
+
+  // 普通宝盒：如果已经处于非激活状态，说明已被答题或正在答题，不再触发
+  if (!isGolden && chestItem && chestItem.userData && !chestItem.userData.active) return;
+
+  // 普通宝盒：答题开始时立即标记为非激活，防止重复触发（同金色宝箱逻辑）
+  if (!isGolden && chestItem && chestItem.userData) {
+    chestItem.userData.active = false;
+    window.currentQuizChest = chestItem; // 记录当前答题的宝箱（使用全局变量）
+  }
 
   var pool = QDB[GS.difficulty] || QDB.easy;
 
@@ -65,11 +109,15 @@ function showQuiz() {
         b.onclick = null;
       });
       var charName = getCharName();
+      // 普通宝盒一次性：无论答对答错，答题后即销毁（10秒后随机在其他房间刷新）
+      if (!isGolden && chestItem && typeof window.destroyChestItem === 'function') {
+        window.destroyChestItem(chestItem);
+      }
       if (i === q.a) {
         GS.correct++;
         AudioMgr.playQuiz();
         GS.stars += 10;
-        // 解锁金色宝箱时，同一房间内的怪物被激怒并攻击角色
+        // 解锁宝箱时，同一房间内的怪物被激怒并攻击角色
         var playerRoom = roomIndexOf(player.position.x, player.position.z);
         var activeMonsters = (window.monsters || []).concat(window.bosses || []);
         for (var agIdx = 0; agIdx < activeMonsters.length; agIdx++) {
@@ -83,33 +131,30 @@ function showQuiz() {
         }
         // 开箱惊醒睡眠中的Boss（无论Boss在哪个房间）
         if (typeof wakeAllBosses === 'function') wakeAllBosses();
-        var lockedW = REWARD_WEAPON_LIST.filter(function (n) { return !GS.weapons[n] });
-        var rewardText = '';
-        if (lockedW.length > 0) {
-          var wn = lockedW[Math.floor(Math.random() * lockedW.length)];
-          GS.weapons[wn] = WEAPONS[wn];
-          GS.weaponAmmo[wn] = WEAPONS[wn].type === 'rope' ? 1 : 20;
-          GS.weaponCount++;
-          if (!GS.curWeapon) GS.curWeapon = wn;
-          updateWeaponBar();
-          rewardText = WEAPONS[wn].icon + ' ' + wn;
-          createWeaponGetEffect();
+
+        var rewardMsg;
+        if (isGolden) {
+          // 金色宝箱：直接获得3点能量
+          consumeEnergyOrb();
+          gainEnergy(3);
+          rewardMsg = charName + '，你好棒！回答正确！打开金色宝箱获得：🔋能量x3';
         } else {
-          GS.stars += 10;
-          rewardText = '⭐ 星星+10';
+          // 普通宝盒：1-3个能量碎片 + 1件武器（宝盒已在上方统一销毁）
+          var fragCount = 1 + Math.floor(Math.random() * 3);
+          for (var fi = 0; fi < fragCount; fi++) gainFragment();
+          var rewardText = grantRandomWeapon();
+          rewardMsg = charName + '，你好棒！回答正确！打开宝盒获得：💠能量碎片x' + fragCount + '  ' + rewardText;
         }
-        consumeEnergyOrb();
-        // 打开金色宝箱：随机获得3-5个能量碎片
-        var fragCount = 3 + Math.floor(Math.random() * 3);
-        for (var fi = 0; fi < fragCount; fi++) gainFragment();
-        document.getElementById('quiz-reward').textContent = charName + '，你好棒！回答正确！打开宝箱获得：💠能量碎片x' + fragCount + '  ' + rewardText;
+        document.getElementById('quiz-reward').textContent = rewardMsg;
         document.getElementById('quiz-reward').style.display = 'block';
         document.getElementById('quiz-reward').style.color = '#44ff88';
       } else {
-        document.getElementById('quiz-reward').textContent = charName + '，回答错误，正确答案应该是「' + q.o[q.a] + '」，继续加油！';
+        var wrongMsg = charName + '，回答错误，正确答案应该是「' + q.o[q.a] + '」，';
+        wrongMsg += isGolden ? '继续加油！' : '宝盒消失了，去找下一个吧！';
+        document.getElementById('quiz-reward').textContent = wrongMsg;
         document.getElementById('quiz-reward').style.display = 'block';
         document.getElementById('quiz-reward').style.color = '#ff8888';
-        if (energyOrb) energyOrb.userData.cooldown = 2;
+        if (isGolden && energyOrb) energyOrb.userData.cooldown = 2;
       }
       document.getElementById('quiz-close').style.display = 'inline-block';
       updateHUD();
@@ -118,6 +163,12 @@ function showQuiz() {
   });
   document.getElementById('quiz-close').onclick = function () {
     overlay.style.display = 'none';
+    // 普通宝箱在答题结束后立即销毁（同金色宝箱逻辑）
+    if (!isGolden && chestItem && typeof window.destroyChestItem === 'function') {
+      window.destroyChestItem(chestItem);
+    }
+    // 重置当前答题宝箱，允许下一次答题
+    window.currentQuizChest = null;
     GS.running = true;
   };
   GS.running = false;

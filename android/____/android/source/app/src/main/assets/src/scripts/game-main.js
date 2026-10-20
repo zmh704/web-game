@@ -1,8 +1,104 @@
 // ============================================================
 // 更新循环
 // ============================================================
+var _gameOverBroadcasted = false; // 防止重复广播
+
+// 加入者本地怪物攻击检测（在 sendInput 前执行，确保发送最新 HP）
+function joinerLocalMonsterAttack(delta) {
+  if (typeof monsters === 'undefined' || !player) return;
+  // 检测小怪
+  for (var li = 0; li < monsters.length; li++) {
+    var lm = monsters[li];
+    if (!lm || !lm.userData || !lm.userData.active) continue;
+    if (lm.userData.boundTimer > 0 || lm.userData.staggerTimer > 0) continue;
+    if (lm.userData.attackCooldown === undefined) lm.userData.attackCooldown = 0;
+    lm.userData.attackCooldown -= delta;
+    if (lm.userData.attackCooldown > 0) continue;
+    var lDist = player.position.distanceTo(lm.position);
+    var lRange = (!lm.userData.isBoss && lm.userData.type && lm.userData.type.ranged) ? 8 : 3.5;
+    if (lDist < lRange * ((lm.userData.type && lm.userData.type.scale) || 1)) {
+      lm.userData.attackCooldown = 1.5;
+      var lDmg = (typeof monsterHitDamage === 'function') ? monsterHitDamage(lm) : 10;
+      GS.hp = Math.max(0, (GS.hp || 100) - lDmg);
+      hitFlash = 0.3; updateHUD();
+      if (GS.hp <= 0) { GS.hp = 0; GS.gameOver = true; GS.running = false; showGameOver(); }
+      return;
+    }
+  }
+  // 检测Boss
+  if (typeof bosses !== 'undefined') {
+    for (var bi = 0; bi < bosses.length; bi++) {
+      var lb = bosses[bi];
+      if (!lb || !lb.userData || !lb.userData.active) continue;
+      if (lb.userData.boundTimer > 0 || lb.userData.staggerTimer > 0) continue;
+      if (lb.userData.attackCooldown === undefined) lb.userData.attackCooldown = 0;
+      lb.userData.attackCooldown -= delta;
+      if (lb.userData.attackCooldown > 0) continue;
+      if (player.position.distanceTo(lb.position) < 3.5 * ((lb.userData.type && lb.userData.type.scale) || 1)) {
+        lb.userData.attackCooldown = 1.5;
+        var bDmg = (typeof monsterHitDamage === 'function') ? monsterHitDamage(lb) : 10;
+        GS.hp = Math.max(0, (GS.hp || 100) - bDmg);
+        hitFlash = 0.3; updateHUD();
+        if (GS.hp <= 0) { GS.hp = 0; GS.gameOver = true; GS.running = false; showGameOver(); }
+        return;
+      }
+    }
+  }
+  // 检测抓捕者
+  if (typeof chaserMonster !== 'undefined' && chaserMonster && chaserMonster.parent && chaserMonster.userData && chaserMonster.userData.active) {
+    if (chaserMonster.userData.attackCooldown === undefined) chaserMonster.userData.attackCooldown = 0;
+    chaserMonster.userData.attackCooldown -= delta;
+    if (chaserMonster.userData.attackCooldown <= 0 && player.position.distanceTo(chaserMonster.position) < 2.5) {
+      chaserMonster.userData.attackCooldown = 3.0;
+      GS.hp = Math.max(0, (GS.hp || 100) - 15);
+      hitFlash = 0.3; updateHUD();
+      if (GS.hp <= 0) { GS.hp = 0; GS.gameOver = true; GS.running = false; showGameOver(); }
+    }
+  }
+}
+
 function update(delta) {
+  // 联机模式：如果游戏结束，广播一次 game_over 并退出
+  if (GS.mode === 'multiplayer' && GS.isHost && GS.gameOver && !_gameOverBroadcasted && typeof PeerManager !== 'undefined') {
+    _gameOverBroadcasted = true;
+    // 区分失败（HP=0）和通关（逃跑成功）
+    var resultType = (GS.hp <= 0) ? 'defeat' : 'escape';
+    PeerManager.broadcast('game_over', {
+      winner: resultType,
+      stats: { correct: GS.correct, total: GS.total, stars: GS.stars, energy: GS.energy }
+    });
+  }
+
   if (!GS.running || GS.gameOver) return;
+
+  // 加入者本地怪物攻击检测（在 sendInput 之前执行，确保发送最新 HP）
+  if (GS.mode === 'multiplayer' && !GS.isHost && typeof monsters !== 'undefined' && player) {
+    joinerLocalMonsterAttack(delta);
+  }
+
+  // ===== 联机模式同步 =====
+  if (GS.mode === 'multiplayer') {
+    try {
+      if (GS.isHost) {
+        // 处理加入者的移动输入
+        processJoinerInputs(delta);
+
+        // 主机：每50ms发送世界状态快照
+        SyncManager.snapshotTimer += delta * 1000;
+        if (SyncManager.snapshotTimer >= SyncManager.snapshotInterval) {
+          SyncManager.snapshotTimer = 0;
+          SyncManager.sendSnapshot();
+        }
+      } else {
+        // 加入者：发送玩家输入到主机
+        SyncManager.sendInput();
+      }
+      // 更新远程玩家位置（插值）
+      SyncManager.updateRemotePlayers(delta);
+    } catch (e) {
+      console.warn('[Multiplayer] 同步出错，跳过:', e.message);
+    }
+  }
 
   // （已移除中央房间额外刷怪：全场只保持1只Boss+1只小怪）
 
@@ -13,11 +109,11 @@ function update(delta) {
   updateJump(delta);
   updateSkillTimers(delta);
 
-  // 如果被抓住，不能移动
+  // 如果被抓住，不能移动（moveDir 保持零向量，视角仍可转动）
+  var moveDir = new THREE.Vector3();
   if (captureState && captureState.captured) {
     // 移动键无效
   } else {
-    var moveDir = new THREE.Vector3();
     if (keys['w'] || keys['arrowup']) moveDir.z -= 1;
     if (keys['s'] || keys['arrowdown']) moveDir.z += 1;
     if (keys['a'] || keys['arrowleft']) moveDir.x -= 1;
@@ -39,7 +135,10 @@ function update(delta) {
       if (moveVec.length() > 0) {
         var _caps = getDynamicCaps();
         var baseSpeedBonus = Math.min((GS.moveSpeedBonus || 0) + (GS.levelSpeedBonus || 0), _caps.speedCap);
-        moveVec.normalize().multiplyScalar((moveSpeed + baseSpeedBonus) * delta);
+        var spd = moveSpeed + baseSpeedBonus;
+        // 挣脱后短暂加速逃跑
+        if (captureState && captureState.escapeBoostTimer > 0) spd *= 1.5;
+        moveVec.normalize().multiplyScalar(spd * delta);
         player.position.add(moveVec);
         clampPlayer();
         player.rotation.y = Math.atan2(moveVec.x, moveVec.z);
@@ -47,9 +146,10 @@ function update(delta) {
     }
   }
 
-  var smoothFactor = IS_TOUCH ? 15 : 6;
-  mouse.x += (targetMouse.x - mouse.x) * delta * smoothFactor;
-  mouse.y += (targetMouse.y - mouse.y) * delta * smoothFactor;
+  // 帧率无关的指数平滑：桌面端更跟手，触屏稍缓
+  var smoothK = 1 - Math.exp(-(IS_TOUCH ? 18 : 14) * delta);
+  mouse.x += (targetMouse.x - mouse.x) * smoothK;
+  mouse.y += (targetMouse.y - mouse.y) * smoothK;
 
   var camOffset = new THREE.Vector3(0, 3, 6);
   var euler = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -59,10 +159,19 @@ function update(delta) {
   rotOffset.applyQuaternion(yQuat);
 
   var targetPos = player.position.clone().add(rotOffset);
-  camera.position.lerp(targetPos, 0.1);
+  // 相机跟随也做帧率无关平滑（被拖拽时加快跟随，避免玩家被拖出画面）
+  var camK = 1 - Math.exp(-((captureState && captureState.captured) ? 10 : 6) * delta);
+  camera.position.lerp(targetPos, camK);
   camera.lookAt(player.position.x, player.position.y + 1.2, player.position.z);
 
-  updateMonster(delta);
+  // 联机加入者模式：跳过怪物AI和道具拾取，使用插值
+  if (GS.mode === 'multiplayer' && !GS.isHost) {
+    if (typeof SyncManager.updateSyncedMonsters === 'function') {
+      SyncManager.updateSyncedMonsters(delta);
+    }
+  } else {
+    updateMonster(delta);
+  }
   updateItems(delta);
 
   // 更新角色动画
@@ -78,16 +187,33 @@ function update(delta) {
   // 更新抓捕者系统
   updateCaptureSystem(delta);
 
+  // 金色宝箱和普通宝箱更新（加入者只更新动画，不触发答题）
   if (energyOrb && energyOrb.userData.active) {
     // 金色宝箱：轻微浮动 + 光晕脉动
     energyOrb.position.y = groundY + Math.sin(clock.elapsedTime * 2 + energyOrb.userData.floatPhase) * 0.06;
     if (energyOrb.userData.glow) {
       energyOrb.userData.glow.material.opacity = 0.08 + Math.sin(clock.elapsedTime * 3) * 0.05;
     }
-    if (energyOrb.userData.cooldown > 0) {
-      energyOrb.userData.cooldown -= delta;
-    } else if (player.position.distanceTo(energyOrb.position) < 2) {
-      showQuiz();
+    // 加入者不触发答题，由主机 processJoinerInputs 处理
+    if (GS.mode !== 'multiplayer' || GS.isHost) {
+      if (energyOrb.userData.cooldown > 0) {
+        energyOrb.userData.cooldown -= delta;
+      } else if (player.position.distanceTo(energyOrb.position) < 2) {
+        showQuiz();
+      }
+    }
+  }
+  // 普通宝箱更新（加入者只更新动画，不触发答题）
+  if (GS.mode !== 'multiplayer' || GS.isHost) {
+    for (var ni = 0; ni < normalChests.length; ni++) {
+      var nc = normalChests[ni];
+      if (!nc.userData.active) continue;
+      nc.position.y = 1.0 + Math.sin(clock.elapsedTime * 2 + nc.userData.floatPhase) * 0.2;
+      nc.rotation.y += delta * nc.userData.rotSpeed;
+      if (player.position.distanceTo(nc.position) < 1.5) {
+        nc.userData.active = false;
+        showQuiz(nc);
+      }
     }
   }
   if (ship) {
@@ -98,6 +224,10 @@ function update(delta) {
       ship.userData.ring.material.opacity = shipFull ? 0.5 + Math.sin(clock.elapsedTime * 6) * 0.25 : 0.3;
     }
     if ((GS.energy || 0) >= (GS.energyMax || 5) && !GS.escaping && player.position.distanceTo(ship.position) < 3) {
+      // 联机模式：通知所有加入者逃生开始
+      if (GS.mode === 'multiplayer' && GS.isHost && typeof PeerManager !== 'undefined') {
+        PeerManager.broadcast('game_event', { event: 'escape' });
+      }
       startEscape();
     }
   }
@@ -218,14 +348,24 @@ function update(delta) {
         var hitScale = (tm.userData.type && tm.userData.type.scale) || 1;
 
         if (dist < 1.8 * hitScale) {
-          // 命中伤害限制：Boss至少25发、小怪10发子弹击杀
+          // 命中伤害限制：Boss至少20发(正好一匣弹药)、小怪10发子弹击杀
           // 抓捕者也按10发计算
           var isChaser = (tm === chaserMonster);
-          var minHits = tm.userData.isBoss ? 25 : 10;
+          var minHits = tm.userData.isBoss ? 20 : 10;
           var perHitCap = Math.ceil((tm.userData.type.hp || 100) / minHits);
           var dealt = Math.max(1, Math.min(p.userData.damage, perHitCap));
-          tm.userData.hp -= dealt;
-          monsterHitFlash = 0.2;
+          var _projIsChaser = (typeof chaserMonster !== 'undefined' && tm === chaserMonster);
+          var _projKilled = dealMonsterDamage(tm, dealt, _projIsChaser);
+          tm.userData.hitFlash = 0.2;
+          // 命中硬直：短暂停顿+微击退，让子弹有"打中了"的手感
+          tm.userData.staggerTimer = Math.max(tm.userData.staggerTimer || 0, tm.userData.isBoss ? 0.1 : 0.2);
+          if (!tm.userData.isBoss && p.userData.vel) {
+            var kb = p.userData.vel.clone();
+            kb.y = 0;
+            if (kb.lengthSq() > 0.0001) {
+              tm.position.add(kb.normalize().multiplyScalar(0.35));
+            }
+          }
           AudioMgr.playHit();
           showMessage('💥 命中! -' + dealt, 0x44ff88);
 
@@ -310,7 +450,7 @@ function update(delta) {
             }
           }
 
-          if (tm.userData.hp <= 0) {
+          if (_projKilled) {
             // 判断是否为抓捕者
             if (tm === chaserMonster) {
               // 抓捕者被击败
@@ -342,24 +482,26 @@ function update(delta) {
     }
   }
 
-  // 检查怪物攻击玩家逻辑（怪物可出房间追击，近战范围内即可攻击）
-  var activeMonsters = monsters.concat(bosses);
-  for (var mIdx = 0; mIdx < activeMonsters.length; mIdx++) {
-    var am = activeMonsters[mIdx];
-    if (am.userData.active) {
-      var mDist = am.position.distanceTo(player.position);
-      // 远程小怪攻击距离更远；Boss与近战小怪只能近距离攻击
-      var attackRange = (!am.userData.isBoss && am.userData.type && am.userData.type.ranged) ? 8 : 3.5;
-      if (mDist < attackRange * ((am.userData.type && am.userData.type.scale) || 1)) {
-        monsterAttack(am);
+  // 检查怪物攻击玩家逻辑（加入者跳过，由主机权威决定）
+  if (GS.mode !== 'multiplayer' || GS.isHost) {
+    var activeMonsters = monsters.concat(bosses);
+    for (var mIdx = 0; mIdx < activeMonsters.length; mIdx++) {
+      var am = activeMonsters[mIdx];
+      if (am.userData.active) {
+        var mDist = am.position.distanceTo(player.position);
+        // 远程小怪攻击距离更远；Boss与近战小怪只能近距离攻击
+        var attackRange = (!am.userData.isBoss && am.userData.type && am.userData.type.ranged) ? 8 : 3.5;
+        if (mDist < attackRange * ((am.userData.type && am.userData.type.scale) || 1)) {
+          monsterAttack(am);
+        }
       }
     }
   }
 
-  if (hitFlash > 0) {
-    document.body.style.backgroundColor = 'rgba(255,0,0,0.03)';
-  } else {
-    document.body.style.backgroundColor = '';
+  // 受击红晕：伤害越新越浓，随 hitFlash 衰减淡出
+  var vig = document.getElementById('hit-vignette');
+  if (vig && !(captureState && captureState.captured)) {
+    vig.style.opacity = hitFlash > 0 ? Math.min(1, hitFlash * 3).toFixed(2) : '0';
   }
 
   updateMinimap();
@@ -398,7 +540,7 @@ function updateMonster(delta) {
 function respawnMonster(m) {
   var baseT = (typeof pickMinionType === 'function') ? pickMinionType() : (m.userData.baseType || m.userData.type);
   var t = scaleMonsterType(baseT);
-  var rm = m.userData.homeRoom;
+  var rm = m.userData.homeRoom || ROOMS[roomIndexOf(m.position.x, m.position.z)] || ROOMS[0];
 
   var g = buildMonsterMesh(t);
   if (t.scale && t.scale !== 1) g.scale.setScalar(t.scale);
@@ -448,13 +590,25 @@ function updateSingleMonsterAI(m, delta) {
     return;
   }
 
-  var dir = new THREE.Vector3().subVectors(player.position, m.position);
+  // 受击硬直：命中后短暂停顿，让攻击有打断感
+  if (m.userData.staggerTimer > 0) {
+    m.userData.staggerTimer -= delta;
+    return;
+  }
+
+  // 联机主机端：怪物追踪最近的玩家（含加入者）；单机/加入者端为本地玩家
+  var _tgtPos = (typeof nearestPlayerPos === 'function') ? nearestPlayerPos(m.position) : player.position;
+  var dir = new THREE.Vector3().subVectors(_tgtPos, m.position);
   var dist = dir.length();
   dir.y = 0;
 
   var home = m.userData.homeRoom;
+  // 安全兜底：没有 homeRoom 的怪物（如加入者端同步创建的）使用中央房间
+  if (!home) {
+    home = ROOMS[0];
+  }
   var distToHome = Math.sqrt(Math.pow(m.position.x - home.cx, 2) + Math.pow(m.position.z - home.cz, 2));
-  
+
   var timeSinceAttacked = clock.elapsedTime - (m.userData.lastAttackedTime || 0);
   var isAggro = (m.userData.aggroTimer > 0);
 
@@ -656,7 +810,9 @@ function updateSingleMonsterAI(m, delta) {
     m.children[0].scale.setScalar(breathe);
   }
 
-  if (monsterHitFlash > 0) {
+  // 逐怪受击闪光（只有被打中的怪变亮）
+  if (m.userData.hitFlash > 0) {
+    m.userData.hitFlash -= delta;
     m.children.forEach(function (child) {
       if (child.isMesh && child.material.emissiveIntensity !== undefined) {
         child.material.emissiveIntensity = 0.8;
@@ -787,7 +943,7 @@ function updateMinionWander(m, t, delta) {
 
   // 房间内随机游荡
   if (!m.userData.wanderTarget ||
-      Math.abs(m.position.x - m.userData.wanderTarget.x) + Math.abs(m.position.z - m.userData.wanderTarget.z) < 1.5) {
+    Math.abs(m.position.x - m.userData.wanderTarget.x) + Math.abs(m.position.z - m.userData.wanderTarget.z) < 1.5) {
     var rm = ROOMS[roomIndexOf(m.position.x, m.position.z)];
     m.userData.wanderTarget = {
       x: rm.cx + (Math.random() - 0.5) * (roomSize - 14),
@@ -839,7 +995,7 @@ function updateMinimap() {
   // 画门（绿色小方块表示门洞）
   var G = DOOR_HALF;
   ctx.fillStyle = 'rgba(100,200,100,0.35)';
-  DOOR_POSITIONS.forEach(function(dp) {
+  DOOR_POSITIONS.forEach(function (dp) {
     var dx = dp[0], dz = dp[1];
     var isVertical = (dx === -H || dx === H);
     if (isVertical) {
@@ -904,6 +1060,44 @@ function updateMinimap() {
 
   // 小地图不显示怪物位置
 
+  // 小地图显示怪物位置（联机模式加入者端显示同步的怪物）
+  if (GS.mode === 'multiplayer' && !GS.isHost) {
+    // 显示小怪（红色点）
+    if (typeof monsters !== 'undefined') {
+      for (var mi = 0; mi < monsters.length; mi++) {
+        var mm = monsters[mi];
+        if (mm && mm.userData && mm.userData.active && mm.parent) {
+          var mmx = ox + mm.position.x * scale, mmz = oz + mm.position.z * scale;
+          ctx.fillStyle = 'rgba(255,50,50,0.6)';
+          ctx.beginPath(); ctx.arc(mmx, mmz, 2, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+    }
+    // 显示Boss（紫色大点）
+    if (typeof bosses !== 'undefined') {
+      for (var bi = 0; bi < bosses.length; bi++) {
+        var bb = bosses[bi];
+        if (bb && bb.userData && bb.userData.active && bb.parent) {
+          var bbx = ox + bb.position.x * scale, bbz = oz + bb.position.z * scale;
+          ctx.fillStyle = 'rgba(180,50,255,0.8)';
+          ctx.beginPath(); ctx.arc(bbx, bbz, 3.5, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = 'rgba(180,50,255,0.4)';
+          ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.arc(bbx, bbz, 5, 0, Math.PI * 2); ctx.stroke();
+        }
+      }
+    }
+    // 显示追捕者（白色闪烁点）
+    if (typeof chaserMonster !== 'undefined' && chaserMonster && chaserMonster.parent) {
+      var cx2 = ox + chaserMonster.position.x * scale, cz2 = oz + chaserMonster.position.z * scale;
+      var pulse2 = 2 + Math.sin(clock.elapsedTime * 4) * 0.5;
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.beginPath(); ctx.arc(cx2, cz2, pulse2, 0, Math.PI * 2); ctx.fill();
+    }
+  } else if (GS.mode !== 'multiplayer') {
+    // 单机模式：显示怪物位置（原有逻辑保留）
+  }
+
   var cx = ox + player.position.x * scale, cz = oz + player.position.z * scale;
   ctx.fillStyle = '#44ff88';
   ctx.beginPath(); ctx.arc(cx, cz, 3.5, 0, Math.PI * 2); ctx.fill();
@@ -912,6 +1106,22 @@ function updateMinimap() {
   ctx.beginPath(); ctx.moveTo(cx, cz);
   ctx.lineTo(cx + Math.sin(player.rotation.y) * 9, cz + Math.cos(player.rotation.y) * 9);
   ctx.stroke();
+
+  // 联机模式：显示远程玩家位置
+  if (GS.mode === 'multiplayer' && typeof SyncManager !== 'undefined') {
+    for (var rpid in SyncManager.remotePlayers) {
+      var rp = SyncManager.remotePlayers[rpid];
+      if (rp && rp.state) {
+        var rx = ox + rp.state.x * scale, rz = oz + rp.state.z * scale;
+        ctx.fillStyle = '#66ccff';
+        ctx.beginPath(); ctx.arc(rx, rz, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(102,204,255,0.5)';
+        ctx.font = '6px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(rp.playerName || '玩家', rx, rz - 5);
+      }
+    }
+  }
 
   ctx.fillStyle = 'rgba(0,0,0,0.4)';
   ctx.fillRect(2, 2, 50, 8);
@@ -925,19 +1135,304 @@ function updateMinimap() {
 }
 
 // ============================================================
+// 主机：应用道具效果到加入者（用于联机模式下加入者拾取道具）
+// ============================================================
+function applyItemEffectToJoiner(p, itemId) {
+  switch (itemId) {
+    case 'hpPotion':
+      var maxHp = (p.maxHp || 100) + (p.maxHpBonus || 0);
+      p.hp = Math.min(maxHp, (p.hp || 100) + 30);
+      break;
+    case 'speedBoots':
+      p.moveSpeedBonus = (p.moveSpeedBonus || 0) + 1.5;
+      break;
+    case 'weapon':
+      p.curWeapon = '几何能量珠';
+      break;
+    case 'atkGem':
+      p.atkBonus = (p.atkBonus || 0) + 10;
+      p.atkSpeedBonus = (p.atkSpeedBonus || 0) + 0.05;
+      break;
+    case 'defGem':
+      p.maxHpBonus = (p.maxHpBonus || 0) + 20;
+      p.defBonus = (p.defBonus || 0) + 5;
+      break;
+    case 'flashlight':
+      p.hasFlashlight = true;
+      break;
+    case 'fragment':
+      p.fragments = (p.fragments || 0) + 1;
+      if (p.fragments >= 2) {
+        p.fragments = 0;
+        p.energy = (p.energy || 0) + 1;
+      }
+      break;
+  }
+}
+
+// ============================================================
+// 主机：处理加入者的移动输入
+// ============================================================
+function processJoinerInputs(delta) {
+  if (GS.mode !== 'multiplayer' || !GS.isHost) return;
+  if (typeof PeerManager === 'undefined') return;
+
+  var localEnergyOrb = window.energyOrb;
+  var localNormalChests = window.normalChests;
+  var localItems = window.items;
+
+  for (var pid in PeerManager.players) {
+    if (pid === PeerManager.playerId) continue;
+    var p = PeerManager.players[pid];
+    // 位置由加入者通过 player_input 发送，主机直接信任（客户端预测）
+    if (!p.position) {
+      p.position = { x: 0, z: -4 };
+      p.rotationY = 0;
+    }
+
+    // 处理加入者技能状态（用于快照同步给其他加入者）
+    if (p.skill) {
+      p.skillActive = 3.0;
+      p.skill = false;
+    }
+    if (p.skillActive > 0) {
+      p.skillActive -= delta;
+    }
+
+    // 检测加入者是否靠近宝箱
+    if (p._quizCooldown === undefined) p._quizCooldown = 0;
+    if (p._quizCooldown > 0) p._quizCooldown -= delta;
+
+    // 检测金色宝箱（使用 per-player 冷却，避免被全局 currentQuizChest 阻塞）
+    if (localEnergyOrb && localEnergyOrb.userData && localEnergyOrb.userData.active) {
+      var distToOrb = Math.sqrt(
+        Math.pow(p.position.x - localEnergyOrb.position.x, 2) +
+        Math.pow(p.position.z - localEnergyOrb.position.z, 2)
+      );
+      if (distToOrb < 2 && p._quizCooldown <= 0) {
+        p._quizCooldown = 2;
+        // 触发答题
+        triggerQuizForPlayer(pid, pickRandomQuestion());
+      }
+    }
+
+    // 检测普通宝箱（使用 per-player 冷却）
+    if (localNormalChests) {
+      for (var ni = 0; ni < localNormalChests.length; ni++) {
+        var nc = localNormalChests[ni];
+        if (!nc.userData.active) continue;
+        var distToChest = Math.sqrt(
+          Math.pow(p.position.x - nc.position.x, 2) +
+          Math.pow(p.position.z - nc.position.z, 2)
+        );
+        if (distToChest < 1.5 && p._quizCooldown <= 0) {
+          p._quizCooldown = 2;
+          nc.userData.active = false;
+          triggerQuizForPlayer(pid, pickRandomQuestion());
+          break;
+        }
+      }
+    }
+
+    // 检测道具拾取
+    if (localItems) {
+      for (var ii = 0; ii < localItems.length; ii++) {
+        var it = localItems[ii];
+        if (!it.userData.active) continue;
+        var distToItem = Math.sqrt(
+          Math.pow(p.position.x - it.position.x, 2) +
+          Math.pow(p.position.z - it.position.z, 2)
+        );
+        if (distToItem < 1.5) {
+          it.userData.active = false;
+          // 应用道具效果到加入者状态
+          var itemId = it.userData.itemType ? it.userData.itemType.id : null;
+          if (itemId) {
+            applyItemEffectToJoiner(p, itemId);
+          }
+          // 通知加入者拾取道具
+          PeerManager.sendTo(pid, 'game_event', {
+            event: 'item_pickup',
+            itemType: it.userData.itemType ? it.userData.itemType.id : 'unknown',
+            message: it.userData.itemType ? it.userData.itemType.desc : '拾取道具'
+          });
+          // 移除道具并安排刷新
+          var pickRoom = null;
+          for (var ri = 0; ri < ROOMS.length; ri++) {
+            if (Math.abs(it.position.x - ROOMS[ri].cx) < roomSize / 2 &&
+              Math.abs(it.position.z - ROOMS[ri].cz) < roomSize / 2) {
+              pickRoom = ROOMS[ri];
+              break;
+            }
+          }
+          // 从场景移除
+          if (it.parent) scene.remove(it);
+          localItems.splice(ii, 1);
+          ii--;
+          // 10秒后刷新
+          if (pickRoom) {
+            (function (room, roomCx, roomCz) {
+              setTimeout(function () {
+                spawnItemsInRoom(room);
+                // 联机模式：广播道具刷新通知
+                if (GS.mode === 'multiplayer' && GS.isHost && typeof PeerManager !== 'undefined') {
+                  PeerManager.broadcast('item_refresh', {
+                    roomCx: roomCx,
+                    roomCz: roomCz
+                  });
+                }
+              }, 10000);
+            })(pickRoom, pickRoom.cx, pickRoom.cz);
+          }
+        }
+      }
+    }
+
+    // 检测加入者拾取碎片（由主机权威处理）
+    var localFragments = window.fragmentDrops;
+    if (localFragments) {
+      for (var fi = 0; fi < localFragments.length; fi++) {
+        var ff = localFragments[fi];
+        if (!ff.parent) continue;
+        var distToFrag = Math.sqrt(
+          Math.pow(p.position.x - ff.position.x, 2) +
+          Math.pow(p.position.z - ff.position.z, 2)
+        );
+        if (distToFrag < 1.5) {
+          // 加入者拾取碎片
+          if (p.fragments === undefined) p.fragments = 0;
+          p.fragments = (p.fragments || 0) + 1;
+          if (p.fragments >= 2) {
+            p.fragments = 0;
+            p.energy = (p.energy || 0) + 1;
+          }
+          // 移除碎片
+          if (ff.parent) scene.remove(ff);
+          localFragments.splice(fi, 1);
+          fi--;
+          break;
+        }
+      }
+    }
+
+    // 加入者怪物攻击由本地 update() 检测，主机不再重复计算
+
+    // 检测加入者死亡
+    if (p.hp <= 0 && !GS.gameOver) {
+      GS.gameOver = true;
+      GS.running = false;
+      if (!_gameOverBroadcasted) {
+        _gameOverBroadcasted = true;
+        PeerManager.broadcast('game_over', {
+          winner: 'defeat',
+          stats: { correct: GS.correct, total: GS.total, stars: GS.stars, energy: GS.energy }
+        });
+      }
+      showGameOver();
+    }
+
+    // 更新远程玩家 3D 模型位置（主机端渲染加入者）
+    var rp = SyncManager.remotePlayers[pid];
+    if (rp) {
+      // 主机端：加入者位置每帧更新，直接设置位置（不插值，避免延迟卡顿）
+      rp.mesh.position.x = p.position.x;
+      rp.mesh.position.z = p.position.z;
+      rp.mesh.rotation.y = p.rotationY || 0;
+      // 保存状态供快照使用（其他加入者通过快照接收位置）
+      rp.state = {
+        x: p.position.x,
+        z: p.position.z,
+        rotY: p.rotationY || 0,
+        hp: p.hp || 100,
+        maxHp: p.maxHp || 100,
+        energy: p.energy || 0,
+        energyMax: p.energyMax || 5,
+        curWeapon: p.curWeapon || '木棍',
+        isJumping: p.isJumping || false,
+        level: p.level || 1
+      };
+      rp.prevState = rp.state;
+      rp.interpStartTime = Date.now();
+      rp.interpDuration = 100;
+    } else {
+      // 远程玩家模型不存在，尝试创建
+      SyncManager.createRemotePlayer(pid, p.character || 'qike', p.name || '玩家');
+    }
+  }
+}
+
+// 选取随机题目
+function pickRandomQuestion() {
+  var pool = QDB[GS.difficulty] || QDB.easy;
+  if (!GS.usedQuestions) GS.usedQuestions = {};
+  if (!GS.usedQuestions[GS.difficulty]) GS.usedQuestions[GS.difficulty] = [];
+  var used = GS.usedQuestions[GS.difficulty];
+  var available = [];
+  for (var idx = 0; idx < pool.length; idx++) {
+    if (used.indexOf(idx) === -1) available.push(idx);
+  }
+  if (available.length === 0) {
+    GS.usedQuestions[GS.difficulty] = [];
+    for (var ri = 0; ri < pool.length; ri++) available.push(ri);
+  }
+  var randIdx = Math.floor(Math.random() * available.length);
+  var chosenIdx = available[randIdx];
+  used.push(chosenIdx);
+  return pool[chosenIdx];
+}
+
+// ============================================================
 // 动画循环
 // ============================================================
 function animate() {
   requestAnimationFrame(animate);
   var delta = Math.min(clock.getDelta(), 0.05);
-  update(delta);
-  renderer.render(scene, camera);
+  try {
+    update(delta);
+  } catch (e) {
+    console.error('[Game] update() 出错:', e);
+  }
+  try {
+    renderer.render(scene, camera);
+  } catch (e) {
+    console.error('[Game] render() 出错:', e);
+  }
 }
 
 // ============================================================
 // 启动入口
 // ============================================================
 function init() {
+  console.log('[Game] init() 调用: GS.mode=' + GS.mode + ' GS.isHost=' + GS.isHost + ' PeerManager.connected=' + (PeerManager ? PeerManager.connected : 'N/A'));
   applyLevelBonuses();
+  // 重置联机广播标志
+  _gameOverBroadcasted = false;
+  // 先初始化联机同步（注册消息处理器，确保不丢失快照）
+  if (GS.mode === 'multiplayer' && SyncManager) {
+    SyncManager.initMultiplayerMode();
+  }
+  // 再初始化场景（场景中会设置 window.scene 等供同步模块使用）
   initScene();
+
+  // 主机端：为所有已连接的加入者创建远程玩家 3D 模型
+  if (GS.mode === 'multiplayer' && GS.isHost && PeerManager && PeerManager.connected) {
+    console.log('[Game] init: 主机模式，创建远程玩家模型');
+    var playerList = PeerManager.getPlayerList();
+    playerList.forEach(function (p) {
+      if (p.id !== PeerManager.playerId) {
+        // 延迟创建，确保场景就绪
+        setTimeout(function () {
+          SyncManager.createRemotePlayer(p.id, p.character || 'qike', p.name || '玩家');
+        }, 100);
+      }
+    });
+  }
+
+  // 加入者端：场景就绪后请求一次完整世界状态
+  if (GS.mode === 'multiplayer' && !GS.isHost && PeerManager && PeerManager.connected) {
+    console.log('[Game] init: 加入者模式，请求世界状态');
+    setTimeout(function () {
+      PeerManager.broadcast('world_state_request', {});
+    }, 500);
+  }
 }

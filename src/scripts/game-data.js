@@ -1,7 +1,94 @@
 // ============================================================
+// 全局数值平衡配置（BALANCE）
+//
+// 所有战斗/成长/道具的数值都从这里读取，不要再散落在各个脚本里。
+// 调平衡时只改这一块，就能整体拉动难度曲线。
+//
+// 设计目标（面向 5~10 岁）：
+//   · 第 1 章简单难度：小怪约 6~8 次击杀玩家，Boss 约 4 次
+//   · 每多 1 章，受到的伤害 +24%，怪物血量/数量提升
+//   · 每捡一个道具都要能明显感觉到变强，且不会在 1~2 个之后就失效
+//   · Boss 约 12~20 次攻击解决（视武器而定），不会因为一发高伤被秒
+// ============================================================
+var BALANCE = {
+  player: {
+    baseHp: 100,
+    baseSpeed: 5.0,          // 玩家基础移速（米/秒）
+    meleeCooldown: 0.55,     // 木棍基础攻击间隔
+    rangedCooldown: 0.50,    // 远程武器基础攻击间隔
+    minCooldown: 0.15,       // 攻击间隔硬下限
+    moveSmoothTouch: 18,
+    moveSmoothDesktop: 14
+  },
+
+  // 等级成长：每获得 1 点能量升 1 级
+  level: {
+    hp: 6,                   // 每级 +6 最大生命
+    atk: 0.5,                // 每级 +0.5 攻击（刻意压低，攻击力主要靠道具）
+    def: 0.5,
+    speed: 0.1,
+    healPct: 0.25            // 升级回复 25% 最大生命
+  },
+
+  // 加成上限：作用于「等级成长 + 道具」的总和
+  // 取值刻意大于一格道具的满配，保证最后一个道具仍然有效
+  caps: {
+    atk: 45,                 // 攻击加成上限（等级约 10 + 3 颗宝石 30 = 40，不触顶）
+    def: 20,
+    speed: 3.0,              // 移速加成上限（基础 5 → 最高 8）
+    atkSpeed: 0.20           // 攻速最多削减 0.2 秒冷却
+  },
+
+  // 章节威胁曲线：第 1 章 1.00，第 5 章 1.96
+  chapterThreat: function (ch) {
+    return 1 + 0.24 * ((ch || 1) - 1);
+  },
+
+  // 难度：只影响战斗数值（题库另由 QDB 决定）
+  difficulty: {
+    easy: { damage: 0.80, chase: 0.90, hp: 0.85, name: '初级' },
+    medium: { damage: 1.00, chase: 1.00, hp: 1.00, name: '中级' },
+    hard: { damage: 1.15, chase: 1.10, hp: 1.20, name: '高级' }
+  },
+
+  combat: {
+    meleeRange: 5.0,
+    // 玩家普通追击速度上限：略高于未加成的移速(5)，保证「拿到靴子就能甩开」
+    chaseSpeedCap: 5.6,
+    dashMul: 3.0,            // 小怪冲刺速度 = 基础速度 × 该值
+    dashSpeedCapMul: 1.5,    // 但冲刺速度不超过 chaseSpeedCap × 该值（否则完全躲不掉）
+    dashInterval: 10,        // 冲刺间隔（秒）
+    dashDuration: 1.0,       // 冲刺持续（秒）
+    bossHitGuard: 8,         // Boss 至少挨 8 下才会死（防秒杀）
+    minionHitGuard: 3,       // 小怪至少挨 3 下才会死
+    maxDefenseReduction: 0.5, // 防御最多减免 50% 伤害
+    bossThreatFactor: 0.55    // Boss 的章节威胁增幅打折（否则第 5 章 Boss 两下秒人）
+  },
+
+  items: {
+    potionHealPct: 0.35,     // 生命药水恢复 35% 最大生命
+    potionHealMin: 30,       // 但不少于 30 点
+    bootsSpeed: 1.5,
+    atkGemAtk: 10,
+    atkGemAtkSpeed: 0.05,
+    defGemHp: 20,
+    defGemDef: 5,
+    ammoPerPickup: 30        // 每次捡到武器给的弹药
+  },
+
+  // 随时间增强：每分钟怪物属性 +8%，上限 1.35 倍
+  timeScale: { perMinute: 0.08, max: 1.35, maxSpeedRatio: 1.15 }
+};
+
+// 取难度配置（带兜底，防止旧存档/联机对端传来未知值）
+function balanceDiff(name) {
+  return BALANCE.difficulty[name] || BALANCE.difficulty.medium;
+}
+
+// ============================================================
 // 章节数据
 // ============================================================
-var CHAPTERS = [
+var CHAPTERS = window.CHAPTERS || [
     {
         id: 1,
         name: '翠绿森林',
@@ -82,7 +169,7 @@ var CHAPTERS = [
 // ============================================================
 // 题库 - 每级100题（覆盖语文、数学、英语）
 // ============================================================
-var QDB = {
+var QDB = window.QDB || {
     // ═══════════════════════════════════════════════════════
     // 初级（学前班~一年级）100题
     // ═══════════════════════════════════════════════════════
@@ -418,11 +505,16 @@ var QDB = {
 // ============================================================
 // 武器数据
 // ============================================================
+// 武器定位：
+//   木棍  —— 无限弹药但必须近身，单发伤害中等
+//   能量珠 —— 单发最高伤害，弹道慢，适合打 Boss
+//   连发弓 —— 单发略低但弹速快、更容易命中移动目标
+// 远程武器单发伤害必须高于木棍，否则无限弹药的木棍会完全压制它们
 var WEAPONS = {
-    '木棍': { dmg: 8, color: 0x9a6b3f, icon: '🪵', desc: '默认·近战敲打怪物，可无限使用，伤害最低', type: 'stick', speed: 0, size: 0.15, infinite: true },
+    '木棍': { dmg: 45, color: 0x9a6b3f, icon: '🪵', desc: '默认·近战敲打怪物，可无限使用，需近身冒险', type: 'stick', speed: 0, size: 0.15, infinite: true },
     '捆仙绳': { dmg: 0, color: 0xffcc44, icon: '🪢', desc: '神器·精准束缚视线内怪物3秒(一次性)', type: 'rope', speed: 0, size: 0.2 },
-    '几何能量珠': { dmg: 22, color: 0x00ff88, icon: '🔮', desc: '数学·翠绿光弹', type: 'orb', speed: 15, size: 0.18, pulse: true },
-    '字母连发弓': { dmg: 18, color: 0x4488ff, icon: '🏹', desc: '英语·蓝光箭矢', type: 'arrow', speed: 20, size: 0.15, trail: true }
+    '几何能量珠': { dmg: 55, color: 0x00ff88, icon: '🔮', desc: '数学·翠绿光弹，单发伤害最高', type: 'orb', speed: 15, size: 0.18, pulse: true },
+    '字母连发弓': { dmg: 45, color: 0x4488ff, icon: '🏹', desc: '英语·蓝光箭矢，弹速快易命中', type: 'arrow', speed: 20, size: 0.15, trail: true }
 };
 var WEAPON_LIST = ['木棍', '捆仙绳', '几何能量珠', '字母连发弓'];
 // 可通过道具/答题获得的武器（木棍为默认武器，不在奖励池中）
@@ -431,32 +523,50 @@ var REWARD_WEAPON_LIST = ['捆仙绳', '几何能量珠', '字母连发弓'];
 // ============================================================
 // 怪物数据
 // ============================================================
+// hp：以木棍 45 伤害为基准，小怪约 5~7 下、Boss 约 15~20 下
+// dmg：第 1 章基准的「绝对伤害」，实际伤害还会乘章节威胁系数与难度系数
+//      （见 monsterHitDamage，不要再把它当百分比用）
 var MONSTER_TYPES = {
-    '追风怪': { color: 0xaa2244, emissive: 0xcc1144, eyes: 6, speed: 2.8, hp: 320, dmg: 10, scale: 1.1, spikes: true, fangs: true },
-    '冰晶兽': { color: 0x4488aa, emissive: 0x2266cc, eyes: 4, speed: 2.3, hp: 360, dmg: 12, scale: 1.2, spikes: true, fangs: true },
-    '霜刺虫': { color: 0x553366, emissive: 0x8844aa, eyes: 8, speed: 3.5, hp: 280, dmg: 8, scale: 0.7, spikes: true },
-    '沙暴灵': { color: 0x663322, emissive: 0xaa4422, eyes: 3, speed: 3.0, hp: 340, dmg: 12, scale: 1, fangs: true },
-    '沙蝎': { color: 0x442211, emissive: 0x883311, eyes: 6, speed: 3.8, hp: 300, dmg: 14, scale: 0.8, spikes: true },
-    '熔岩怪': { color: 0x881100, emissive: 0xff3300, eyes: 4, speed: 2.5, hp: 400, dmg: 15, scale: 1.15, spikes: true, fangs: true },
-    '火蜥蜴': { color: 0x992200, emissive: 0xcc3300, eyes: 4, speed: 4.0, hp: 300, dmg: 10, scale: 0.85, fangs: true },
-    '烈焰鸟': { color: 0x661100, emissive: 0xcc4400, eyes: 4, speed: 4.4, hp: 260, dmg: 9, scale: 0.65, fly: true, fangs: true },
-    '星灵': { color: 0x442266, emissive: 0x8844dd, eyes: 5, speed: 3.2, hp: 340, dmg: 13, scale: 0.9, fly: true },
-    '虚空兽': { color: 0x1a0a33, emissive: 0x440099, eyes: 7, speed: 2.8, hp: 420, dmg: 16, scale: 1.3, spikes: true, fangs: true },
-    '陨石龙': { color: 0x331144, emissive: 0x6622cc, eyes: 4, speed: 3.6, hp: 380, dmg: 14, scale: 1.1, spikes: true, fangs: true },
-    // 新增远程攻击怪物
-    '暗影射手': { color: 0x220044, emissive: 0x6600aa, eyes: 4, speed: 1.8, hp: 280, dmg: 8, scale: 0.9, ranged: true, rangedCooldown: 2.0, fangs: true },
-    '毒液喷射者': { color: 0x224400, emissive: 0x44aa00, eyes: 6, speed: 1.5, hp: 260, dmg: 7, scale: 0.8, ranged: true, rangedCooldown: 1.8, fangs: true },
-    // 新增快速扑击怪物
-    '影狼': { color: 0x111122, emissive: 0x4444aa, eyes: 4, speed: 4.5, hp: 260, dmg: 12, scale: 0.7, charge: true, fangs: true, spikes: true },
-    '突袭者': { color: 0x331111, emissive: 0xaa2222, eyes: 2, speed: 5.0, hp: 240, dmg: 15, scale: 0.6, charge: true, fangs: true },
+    '追风怪': { color: 0xaa2244, emissive: 0xcc1144, eyes: 6, speed: 2.8, hp: 250, dmg: 20, scale: 1.1, spikes: true, fangs: true },
+    '冰晶兽': { color: 0x4488aa, emissive: 0x2266cc, eyes: 4, speed: 2.3, hp: 290, dmg: 22, scale: 1.2, spikes: true, fangs: true },
+    '霜刺虫': { color: 0x553366, emissive: 0x8844aa, eyes: 8, speed: 3.3, hp: 215, dmg: 16, scale: 0.7, spikes: true },
+    '沙暴灵': { color: 0x663322, emissive: 0xaa4422, eyes: 3, speed: 3.0, hp: 270, dmg: 22, scale: 1, fangs: true },
+    '沙蝎': { color: 0x442211, emissive: 0x883311, eyes: 6, speed: 3.5, hp: 235, dmg: 24, scale: 0.8, spikes: true },
+    '熔岩怪': { color: 0x881100, emissive: 0xff3300, eyes: 4, speed: 2.5, hp: 320, dmg: 26, scale: 1.15, spikes: true, fangs: true },
+    '火蜥蜴': { color: 0x992200, emissive: 0xcc3300, eyes: 4, speed: 3.6, hp: 245, dmg: 21, scale: 0.85, fangs: true },
+    '烈焰鸟': { color: 0x661100, emissive: 0xcc4400, eyes: 4, speed: 4.0, hp: 205, dmg: 18, scale: 0.65, fly: true, fangs: true },
+    '星灵': { color: 0x442266, emissive: 0x8844dd, eyes: 5, speed: 3.2, hp: 270, dmg: 24, scale: 0.9, fly: true },
+    '虚空兽': { color: 0x1a0a33, emissive: 0x440099, eyes: 7, speed: 2.8, hp: 340, dmg: 28, scale: 1.3, spikes: true, fangs: true },
+    '陨石龙': { color: 0x331144, emissive: 0x6622cc, eyes: 4, speed: 3.4, hp: 305, dmg: 26, scale: 1.1, spikes: true, fangs: true },
+    // 远程攻击怪物：血少、伤害低，但会放风筝，必须优先处理
+    '暗影射手': { color: 0x220044, emissive: 0x6600aa, eyes: 4, speed: 1.8, hp: 225, dmg: 16, scale: 0.9, ranged: true, rangedCooldown: 2.0, fangs: true },
+    '毒液喷射者': { color: 0x224400, emissive: 0x44aa00, eyes: 6, speed: 1.5, hp: 205, dmg: 14, scale: 0.8, ranged: true, rangedCooldown: 1.8, fangs: true },
+    // 快速扑击怪物：脆但冲刺很凶
+    '影狼': { color: 0x111122, emissive: 0x4444aa, eyes: 4, speed: 4.0, hp: 205, dmg: 22, scale: 0.7, charge: true, fangs: true, spikes: true },
+    '突袭者': { color: 0x331111, emissive: 0xaa2222, eyes: 2, speed: 4.4, hp: 190, dmg: 25, scale: 0.6, charge: true, fangs: true },
     // 抓捕者（巡逻+快速抓捕+持续扣血）
-    '追捕者': { color: 0x111133, emissive: 0x4444ff, eyes: 6, speed: 3.0, hp: 500, dmg: 5, scale: 0.9, spikes: true, fangs: true, chaser: true, chaseSpeed: 7.0 }
+    '追捕者': { color: 0x111133, emissive: 0x4444ff, eyes: 6, speed: 3.0, hp: 500, dmg: 8, scale: 0.9, spikes: true, fangs: true, chaser: true, chaseSpeed: 5.5 }
 };
 
+// Boss 伤害统一走 45 起的「绝对伤害」，靠章节威胁系数拉开差距；
+// hp 递增让后期的 Boss 更耐打，而不是单纯靠伤害秒人
 var BOSSES = {
-    1: { name: '森林守护者', color: 0x116611, emissive: 0x119933, eyes: 4, speed: 2.2, hp: 800, dmg: 34, scale: 2.2, spikes: true, fangs: true },
-    2: { name: '冰霜巨人', color: 0x224477, emissive: 0x3399ff, eyes: 3, speed: 2.0, hp: 850, dmg: 36, scale: 2.4, spikes: true, fangs: true },
-    3: { name: '法老之魂', color: 0x664411, emissive: 0xcc8822, eyes: 2, speed: 2.4, hp: 900, dmg: 38, scale: 2.2, fangs: true },
-    4: { name: '炎魔领主', color: 0x771100, emissive: 0xcc2200, eyes: 4, speed: 2.6, hp: 950, dmg: 40, scale: 2.5, spikes: true, fangs: true },
-    5: { name: '虚空主宰', color: 0x330066, emissive: 0x6600cc, eyes: 8, speed: 2.8, hp: 1000, dmg: 42, scale: 2.7, spikes: true, fangs: true }
+    1: { name: '森林守护者', color: 0x116611, emissive: 0x119933, eyes: 4, speed: 2.2, hp: 700, dmg: 45, scale: 2.2, spikes: true, fangs: true },
+    2: { name: '冰霜巨人', color: 0x224477, emissive: 0x3399ff, eyes: 3, speed: 2.0, hp: 760, dmg: 46, scale: 2.4, spikes: true, fangs: true },
+    3: { name: '法老之魂', color: 0x664411, emissive: 0xcc8822, eyes: 2, speed: 2.4, hp: 800, dmg: 47, scale: 2.2, fangs: true },
+    4: { name: '炎魔领主', color: 0x771100, emissive: 0xcc2200, eyes: 4, speed: 2.6, hp: 860, dmg: 48, scale: 2.5, spikes: true, fangs: true },
+    5: { name: '虚空主宰', color: 0x330066, emissive: 0x6600cc, eyes: 8, speed: 2.8, hp: 920, dmg: 50, scale: 2.7, spikes: true, fangs: true }
 };
+
+// ============================================================
+// 给每种小怪补上 name 字段（值就是它自己的键名）
+//
+// 联机快照靠 userData.type.name 传怪物类型，加入者收到后再用这个名字
+// 回查 MONSTER_TYPES 建模型。这几个类型对象原本都没有 name，
+// 于是快照里的小怪全被兜底成"追风怪"发出去 ——
+// 加入者那边看到的永远是最基础那只怪，跟主机根本不是同一个。
+// scaleMonsterType 是逐字段拷贝的，所以这里补上后缩放副本也会保留。
+// ============================================================
+Object.keys(MONSTER_TYPES).forEach(function (k) {
+  if (!MONSTER_TYPES[k].name) MONSTER_TYPES[k].name = k;
+});

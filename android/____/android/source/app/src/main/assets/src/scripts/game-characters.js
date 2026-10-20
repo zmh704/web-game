@@ -25,9 +25,33 @@ function drawAvatar(id, gender, bodyColor, hatColor) {
   } else {
     ctx.fillStyle = '#663344';
     ctx.beginPath(); ctx.arc(60, 42, 29, Math.PI, Math.PI * 2); ctx.fill();
+    // 长辫子（从耳侧垂到肩膀以下）
     ctx.fillStyle = '#885566';
-    ctx.beginPath(); ctx.ellipse(32, 55, 6, 12, 0.2, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(88, 55, 6, 12, -0.2, 0, Math.PI * 2); ctx.fill();
+    // 左侧辫子
+    ctx.save();
+    ctx.translate(32, 55);
+    ctx.rotate(0.3);
+    ctx.fillRect(-3, 0, 6, 35);
+    for (var bi = 0; bi < 3; bi++) {
+      ctx.beginPath(); ctx.arc(0, 10 + bi * 10, 4, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+    // 右侧辫子
+    ctx.save();
+    ctx.translate(88, 55);
+    ctx.rotate(-0.3);
+    ctx.fillRect(-3, 0, 6, 35);
+    for (var bi = 0; bi < 3; bi++) {
+      ctx.beginPath(); ctx.arc(0, 10 + bi * 10, 4, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+    // 辫子末端蝴蝶结
+    ctx.fillStyle = '#ff88cc';
+    ctx.beginPath(); ctx.arc(29, 87, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(91, 87, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffaadd';
+    ctx.beginPath(); ctx.arc(29, 87, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(91, 87, 2.5, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#663344';
     ctx.fillRect(36, 44, 48, 5);
     ctx.fillRect(38, 40, 44, 4);
@@ -54,14 +78,19 @@ function drawAvatar(id, gender, bodyColor, hatColor) {
     ctx.beginPath(); ctx.moveTo(80, 43); ctx.lineTo(66, 41); ctx.stroke();
   } else {
     ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.ellipse(48, 52, 8, 9, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(72, 52, 8, 9, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(48, 52, 9, 10, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(72, 52, 9, 10, 0, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#552244';
-    ctx.beginPath(); ctx.arc(50, 54, 4.5, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(74, 54, 4.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(50, 54, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(74, 54, 5, 0, Math.PI * 2); ctx.fill();
+    // 高光亮点
     ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(48, 49, 2.5, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(72, 49, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(48, 49, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(72, 49, 3, 0, Math.PI * 2); ctx.fill();
+    // 小高光（让眼睛更水灵）
+    ctx.beginPath(); ctx.arc(45, 47, 1.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(69, 47, 1.5, 0, Math.PI * 2); ctx.fill();
+    // 睫毛
     ctx.strokeStyle = '#552244';
     ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(42, 48); ctx.lineTo(44, 44); ctx.stroke();
@@ -173,25 +202,76 @@ function createPlayer() {
     var hair = new THREE.Mesh(new THREE.SphereGeometry(0.35, 10, 10, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x663344, roughness: 0.8 }));
     hair.position.y = 1.45; g.add(hair);
     var braidMat = new THREE.MeshStandardMaterial({ color: 0x885566, roughness: 0.8 });
-    var braidL = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.07, 0.35, 6), braidMat);
-    braidL.position.set(-0.35, 1.0, 0.15); braidL.rotation.z = 0.3; braidL.rotation.x = -0.1; g.add(braidL);
-    var braidR = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.07, 0.35, 6), braidMat);
-    braidR.position.set(0.35, 1.0, 0.15); braidR.rotation.z = -0.3; braidR.rotation.x = -0.1; g.add(braidR);
+    // 左侧长辫子（从头顶垂下到腰部）
+    var braidSegments = 5;
+    var braidLGroup = new THREE.Group();
+    for (var bsi = 0; bsi < braidSegments; bsi++) {
+      var seg = new THREE.Mesh(new THREE.CylinderGeometry(0.06 - bsi * 0.008, 0.065 - bsi * 0.008, 0.18, 6), braidMat);
+      seg.position.y = -bsi * 0.18;
+      braidLGroup.add(seg);
+    }
+    braidLGroup.position.set(-0.32, 1.35, 0.1);
+    braidLGroup.rotation.z = 0.25;
+    braidLGroup.rotation.x = -0.15;
+    g.add(braidLGroup);
+    // 左侧辫子末端蝴蝶结
     var bowMat = new THREE.MeshStandardMaterial({ color: 0xff88cc, roughness: 0.5 });
-    [-0.24, 0.24].forEach(function (bx) {
-      var bow = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 6), bowMat);
-      bow.position.set(bx, 1.5, 0.28); g.add(bow);
-    });
+    var bowL = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6), bowMat);
+    bowL.position.set(-0.32, 1.35 - braidSegments * 0.18, 0.1);
+    g.add(bowL);
+    var bowLRibbon = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.015, 4, 8), bowMat);
+    bowLRibbon.position.set(-0.32, 1.35 - braidSegments * 0.18, 0.1);
+    bowLRibbon.rotation.x = Math.PI / 2;
+    g.add(bowLRibbon);
+
+    // 右侧长辫子
+    var braidRGroup = new THREE.Group();
+    for (var bsi2 = 0; bsi2 < braidSegments; bsi2++) {
+      var seg2 = new THREE.Mesh(new THREE.CylinderGeometry(0.06 - bsi2 * 0.008, 0.065 - bsi2 * 0.008, 0.18, 6), braidMat);
+      seg2.position.y = -bsi2 * 0.18;
+      braidRGroup.add(seg2);
+    }
+    braidRGroup.position.set(0.32, 1.35, 0.1);
+    braidRGroup.rotation.z = -0.25;
+    braidRGroup.rotation.x = -0.15;
+    g.add(braidRGroup);
+    // 右侧辫子末端蝴蝶结
+    var bowR = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6), bowMat);
+    bowR.position.set(0.32, 1.35 - braidSegments * 0.18, 0.1);
+    g.add(bowR);
+    var bowRRibbon = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.015, 4, 8), bowMat);
+    bowRRibbon.position.set(0.32, 1.35 - braidSegments * 0.18, 0.1);
+    bowRRibbon.rotation.x = Math.PI / 2;
+    g.add(bowRRibbon);
   }
 
-  var eyeColor = isBoy ? 0x222222 : 0x552244;
+  var eyeColor = isBoy ? 0x222222 : 0x442266;
+  var eyeSize = isBoy ? 0.1 : 0.12;
+  var pupilSize = isBoy ? 0.055 : 0.07;
   [[-0.13, 1.32, 0.33], [0.13, 1.32, 0.33]].forEach(function (p) {
-    var eyeW = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+    var eyeW = new THREE.Mesh(new THREE.SphereGeometry(eyeSize, 8, 8), new THREE.MeshStandardMaterial({ color: 0xffffff }));
     eyeW.position.set(p[0], p[1], p[2]); g.add(eyeW);
-    var eyeB = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 8), new THREE.MeshStandardMaterial({ color: eyeColor }));
+    var eyeB = new THREE.Mesh(new THREE.SphereGeometry(pupilSize, 8, 8), new THREE.MeshStandardMaterial({ color: eyeColor }));
     eyeB.position.set(p[0], p[1], p[2] + 0.04); g.add(eyeB);
     var eyeH = new THREE.Mesh(new THREE.SphereGeometry(0.025, 6, 6), new THREE.MeshStandardMaterial({ color: 0xffffff }));
     eyeH.position.set(p[0] + 0.03, p[1] + 0.03, p[2] + 0.08); g.add(eyeH);
+    if (!isBoy) {
+      // 妙妙：下睫毛（可爱）
+      var lashMat = new THREE.MeshStandardMaterial({ color: 0x442266, roughness: 0.8 });
+      for (var li = 0; li < 4; li++) {
+        var lash = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.002, 0.002), lashMat);
+        lash.position.set(p[0] + (li - 1.5) * 0.025, p[1] - 0.07, p[2] + 0.05);
+        lash.rotation.z = (li - 1.5) * 0.1;
+        g.add(lash);
+      }
+      // 上睫毛
+      for (var li2 = 0; li2 < 4; li2++) {
+        var lash2 = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.002, 0.002), lashMat);
+        lash2.position.set(p[0] + (li2 - 1.5) * 0.025, p[1] + 0.09, p[2] + 0.05);
+        lash2.rotation.z = (li2 - 1.5) * -0.1;
+        g.add(lash2);
+      }
+    }
   });
 
   if (isBoy) {
@@ -330,6 +410,8 @@ function createPlayer() {
 
   scene.add(g);
   player = g;
+  // 同步到 window 供联机同步模块使用
+  window.player = player;
 }
 
 // ============================================================

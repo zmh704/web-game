@@ -8,7 +8,9 @@ body {
     overflow: hidden;
     background: #111;
     font-family: 'Arial', 'Microsoft YaHei', sans-serif;
-    user-select: none
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
 }
 
 #loading {
@@ -52,12 +54,17 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
+    padding-top: 30px;
+    overflow-y: auto;
     background: linear-gradient(135deg, #1a1a2e, #2d1b4e);
     transition: opacity 0.5s
 }
 
 #char-select.hidden {
+    /* 必须 display:none —— 否则隐藏后整屏仍然占位，
+       里面的 .back-btn（position:fixed 同一坐标）会盖住下一屏的返回按钮 */
+    display: none;
     opacity: 0;
     pointer-events: none
 }
@@ -148,6 +155,11 @@ body {
     color: #fff
 }
 
+.char-baba .skill-tag {
+    background: #4a7c59;
+    color: #fff
+}
+
 /* === 难度选择界面 === */
 #diff-select {
     position: fixed;
@@ -163,6 +175,7 @@ body {
 }
 
 #diff-select.hidden {
+    display: none;
     opacity: 0;
     pointer-events: none
 }
@@ -244,6 +257,7 @@ body {
 }
 
 #chapter-select.hidden {
+    display: none;
     opacity: 0;
     pointer-events: none
 }
@@ -627,7 +641,10 @@ body.is-touch #skill-bar {
     display: none;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, 0.75)
+    background: rgba(0, 0, 0, 0.75);
+    /* 留出安全边距，避免内容贴边 */
+    padding: 12px;
+    box-sizing: border-box
 }
 
 #quiz-box {
@@ -637,21 +654,36 @@ body.is-touch #skill-bar {
     padding: 30px;
     max-width: 560px;
     width: 90%;
-    text-align: center
+    text-align: center;
+    /* 关键：手机横屏视口高度只有 360~420px，
+       原来没有高度上限，题目+4个选项+奖励+按钮能撑到近 500px，
+       配合 overlay 的 align-items:center，超出部分上下一起被裁，
+       「继续冒险」按钮正好被挤出屏幕。现在改成：
+       框体不超出 overlay，内部只有选项区滚动，问题和按钮永远可见。 */
+    max-height: 100%;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden
 }
 
 #quiz-question {
     color: #fff;
     font-size: 24px;
     margin-bottom: 20px;
-    line-height: 1.4
+    line-height: 1.4;
+    flex: 0 0 auto
 }
 
 #quiz-options {
     display: flex;
     flex-direction: column;
     gap: 10px;
-    margin-bottom: 15px
+    margin-bottom: 15px;
+    /* 选项多/字大时只有这块滚动 */
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto
 }
 
 .opt-btn {
@@ -689,9 +721,11 @@ body.is-touch #skill-bar {
     background: rgba(255, 215, 0, 0.1);
     display: none;
     line-height: 1.5;
-    word-break: break-all
+    word-break: break-all;
+    flex: 0 0 auto
 }
 
+/* 「继续冒险」按钮：永不压缩、永不被滚掉 */
 #quiz-close {
     padding: 10px 30px;
     border: none;
@@ -701,7 +735,122 @@ body.is-touch #skill-bar {
     font-size: 16px;
     font-weight: bold;
     cursor: pointer;
-    display: none
+    display: none;
+    flex: 0 0 auto;
+    margin-top: 4px
+}
+
+@media (max-height: 560px) {
+    #game-over-box {
+        padding: 18px 20px;
+        border-radius: 14px;
+        width: 94%;
+        max-width: 360px
+    }
+
+    #game-over-box h2 {
+        font-size: 22px;
+        margin-bottom: 8px
+    }
+
+    #game-over-box p {
+        font-size: 14px;
+        margin: 4px 0
+    }
+
+    #game-over-buttons {
+        gap: 6px;
+        margin-top: 12px
+    }
+
+    .go-btn {
+        padding: 8px 16px;
+        min-width: 0;
+        min-height: 40px;
+        font-size: 14px;
+        border-radius: 10px
+    }
+
+    body.is-touch .go-btn {
+        min-height: 42px;
+        font-size: 15px
+    }
+}
+
+/* 极小高度屏（720×360 这类旧机型）：再压一档，争取不出现滚动 */
+@media (max-height: 420px) {
+    #quiz-box {
+        padding: 10px 12px;
+        border-radius: 12px;
+        width: 96%;
+        max-width: 460px
+    }
+
+    #quiz-question {
+        font-size: 15px;
+        margin-bottom: 6px;
+        line-height: 1.25
+    }
+
+    #quiz-options {
+        gap: 4px;
+        margin-bottom: 6px
+    }
+
+    .opt-btn {
+        padding: 7px 10px;
+        font-size: 13px;
+        border-radius: 8px
+    }
+
+    #quiz-reward {
+        font-size: 12px;
+        margin: 6px 0;
+        padding: 6px
+    }
+
+    #quiz-close {
+        padding: 7px 20px;
+        font-size: 13px
+    }
+}
+
+/* 小高度屏（手机横屏常见 360~460px 高）：整体紧凑化 */
+@media (max-height: 560px) {
+    #quiz-box {
+        padding: 16px 18px;
+        border-radius: 14px;
+        width: 94%;
+        max-width: 520px
+    }
+
+    #quiz-question {
+        font-size: 17px;
+        margin-bottom: 10px;
+        line-height: 1.3
+    }
+
+    #quiz-options {
+        gap: 6px;
+        margin-bottom: 8px
+    }
+
+    .opt-btn {
+        padding: 9px 12px;
+        font-size: 14px;
+        border-radius: 9px
+    }
+
+    #quiz-reward {
+        font-size: 13px;
+        margin: 8px 0;
+        padding: 8px
+    }
+
+    #quiz-close {
+        padding: 9px 24px;
+        font-size: 14px
+    }
 }
 
 /* 结算界面 */
@@ -713,7 +862,9 @@ body.is-touch #skill-bar {
     display: none;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, 0.8)
+    background: rgba(0, 0, 0, 0.8);
+    padding: 12px;
+    box-sizing: border-box
 }
 
 #game-over-box {
@@ -723,28 +874,37 @@ body.is-touch #skill-bar {
     padding: 40px;
     max-width: 400px;
     width: 90%;
-    text-align: center
+    text-align: center;
+    /* 同答题框：不超出 overlay，超高时自己滚，别把按钮挤出屏幕 */
+    max-height: 100%;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto
 }
 
 #game-over-box h2 {
     color: #ffd700;
     font-size: 32px;
-    margin-bottom: 20px
+    margin-bottom: 20px;
+    flex: 0 0 auto
 }
 
 #game-over-box p {
     color: #ccc;
     font-size: 18px;
-    margin: 8px 0
+    margin: 8px 0;
+    flex: 0 0 auto
 }
 
-/* 结算界面按钮组 */
+/* 结算界面按钮组：永不压缩 */
 #game-over-buttons {
     display: flex;
     gap: 12px;
     margin-top: 24px;
     justify-content: center;
-    flex-wrap: wrap
+    flex-wrap: wrap;
+    flex: 0 0 auto
 }
 
 .go-btn {
@@ -1019,6 +1179,8 @@ body.is-touch .diff-card {
     gap: 6px;
     pointer-events: auto;
     font-family: 'Arial', 'Microsoft YaHei', sans-serif;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
 }
 
 .back-btn:hover {
@@ -1053,6 +1215,19 @@ body.is-touch .diff-card {
 
 #capture-bar.hidden {
     display: none
+}
+
+/* 联机模式隐藏样式 */
+.hidden {
+    display: none
+}
+
+#multiplayer-lobby.hidden {
+    display: none
+}
+
+#room-lobby.hidden {
+    display: none !important
 }
 
 @keyframes captureBarPulse {
@@ -1123,11 +1298,6 @@ body.is-touch .diff-card {
     }
 }
 
-to {
-    border-color: rgba(255, 100, 100, 1);
-}
-}
-
 /* === 技能状态栏 === */
 #skill-bar {
     position: fixed;
@@ -1182,4 +1352,2834 @@ to {
     background: rgba(0, 0, 0, 0.5);
     border: 1px solid rgba(255, 255, 255, 0.1);
     white-space: nowrap;
+}
+
+/* ============================================================
+  联机模式 UI - 全新设计
+  ============================================================ */
+.multiplayer-entry {
+    text-align: center;
+    margin: 0 0 20px 0;
+    padding: 0;
+    width: 100%;
+}
+
+.mp-btn {
+    background: linear-gradient(135deg, #6644cc, #8844ff);
+    color: #fff;
+    border: 2px solid rgba(136, 68, 255, 0.5);
+    padding: 12px 32px;
+    font-size: 16px;
+    border-radius: 24px;
+    cursor: pointer;
+    font-weight: bold;
+    box-shadow: 0 4px 20px rgba(102, 68, 204, 0.4);
+    transition: all 0.2s;
+    touch-action: manipulation;
+    animation: mp-pulse 2s ease-in-out infinite;
+    -webkit-tap-highlight-color: transparent;
+}
+
+@keyframes mp-pulse {
+
+    0%,
+    100% {
+        box-shadow: 0 4px 20px rgba(102, 68, 204, 0.4);
+    }
+
+    50% {
+        box-shadow: 0 4px 30px rgba(102, 68, 204, 0.7);
+    }
+}
+
+.mp-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 25px rgba(102, 68, 204, 0.5);
+}
+
+.mp-btn:active {
+    transform: translateY(0);
+}
+
+.mp-btn-small {
+    background: linear-gradient(135deg, #4488ff, #6644ff);
+    color: #fff;
+    border: none;
+    padding: 10px 24px;
+    font-size: 15px;
+    border-radius: 18px;
+    cursor: pointer;
+    font-weight: bold;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.mp-btn-start {
+    background: linear-gradient(135deg, #44aa66, #66dd88);
+    box-shadow: 0 4px 20px rgba(68, 170, 102, 0.4);
+}
+
+/* 联机大厅 - 精致玻璃拟态风格 */
+#multiplayer-lobby {
+    position: fixed;
+    z-index: 100;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding-top: 50px;
+    background: radial-gradient(ellipse at 50% 0%, #2a1a5e 0%, #1a1a3e 40%, #0f0f2a 100%);
+    color: #fff;
+    overflow-y: auto;
+}
+
+#multiplayer-lobby h1 {
+    font-size: 26px;
+    margin: 0 0 4px 0;
+    background: linear-gradient(135deg, #ffd700, #ff8844);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+#multiplayer-lobby .subtitle {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.5);
+    margin-bottom: 24px;
+    padding: 0 20px;
+    text-align: center;
+}
+
+.mp-lobby-content {
+    width: 90%;
+    max-width: 400px;
+    margin-top: 10px;
+}
+
+.mp-name-input {
+    margin-bottom: 28px;
+    text-align: center;
+}
+
+.mp-name-input label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.6);
+    letter-spacing: 1px;
+}
+
+.mp-name-input input {
+    background: rgba(255, 255, 255, 0.06);
+    border: 2px solid rgba(255, 255, 255, 0.12);
+    border-radius: 14px;
+    padding: 12px 20px;
+    font-size: 16px;
+    color: #fff;
+    text-align: center;
+    width: 220px;
+    outline: none;
+    transition: all 0.3s;
+}
+
+.mp-name-input input:focus {
+    border-color: #8844ff;
+    box-shadow: 0 0 30px rgba(136, 68, 255, 0.15);
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.mp-actions {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    margin-bottom: 20px;
+}
+
+/* 操作按钮卡片 - 使用button元素 */
+button.mp-action-card {
+    all: unset;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    padding: 24px 16px 20px;
+    cursor: pointer;
+    flex: 1;
+    max-width: 160px;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    position: relative;
+    overflow: hidden;
+    text-align: center;
+}
+
+button.mp-action-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,0.05), transparent);
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+button.mp-action-card:hover::before,
+button.mp-action-card:active::before {
+    opacity: 1;
+}
+
+button.mp-action-card:hover {
+    background: rgba(255, 255, 255, 0.08);
+    transform: translateY(-4px);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+button.mp-action-card:active {
+    transform: translateY(-1px) scale(0.97);
+    background: rgba(255, 255, 255, 0.1);
+}
+
+button.mp-action-card:focus-visible {
+    outline: 2px solid #8844ff;
+    outline-offset: 2px;
+}
+
+.mp-icon {
+    font-size: 40px;
+    margin-bottom: 10px;
+    filter: drop-shadow(0 4px 12px rgba(255, 255, 255, 0.15));
+}
+
+.mp-label {
+    font-size: 17px;
+    font-weight: bold;
+    margin-bottom: 4px;
+    color: #fff;
+}
+
+.mp-desc {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.45);
+    line-height: 1.3;
+}
+
+#join-room-form {
+    text-align: center;
+    margin-top: 8px;
+    animation: fadeInUp 0.3s ease-out;
+}
+
+#join-room-form.hidden {
+    display: none !important
+}
+
+#join-room-form label {
+    display: block;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.5);
+    margin-bottom: 10px;
+}
+
+.room-code-input-wrap {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    align-items: center;
+}
+
+.room-code-input {
+    background: rgba(255, 255, 255, 0.06);
+    border: 2px solid rgba(255, 255, 255, 0.12);
+    border-radius: 14px;
+    padding: 12px 16px;
+    font-size: 26px;
+    color: #ffd700;
+    text-align: center;
+    width: 200px;
+    letter-spacing: 8px;
+    outline: none;
+    font-weight: bold;
+    text-transform: uppercase;
+    caret-color: #ffd700;
+    transition: all 0.3s;
+}
+
+.room-code-input:focus {
+    border-color: #ffd700;
+    box-shadow: 0 0 30px rgba(255, 215, 0, 0.12);
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* 创建中加载提示 */
+#mp-creating {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 30px;
+}
+
+#mp-creating.hidden {
+    display: none !important;
+}
+
+#mp-creating:not(.hidden) {
+    display: flex;
+}
+
+.mp-creating-spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid rgba(255, 255, 255, 0.1);
+    border-top: 4px solid #8844ff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.mp-creating-text {
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.mp-creating-error {
+    font-size: 12px;
+    color: #ff6644;
+    text-align: center;
+    max-width: 280px;
+    line-height: 1.4;
+    margin-top: 4px;
+    /* 错误文案是用 \n 分行的，默认会被折叠成一行导致 "…(node server.js)2. 手机…" 粘在一起 */
+    white-space: pre-line;
+    word-break: break-all;
+}
+
+.mp-creating-cancel {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 10px;
+    padding: 8px 24px;
+    color: #ccc;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.mp-creating-cancel:hover {
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+}
+
+/* 服务器地址输入 */
+.mp-server-input {
+    margin: 16px 0 8px;
+    text-align: center;
+}
+
+.mp-server-input label {
+    display: block;
+    font-size: 12px;
+    color: rgba(255,255,255,0.4);
+    margin-bottom: 6px;
+    letter-spacing: 1px;
+}
+
+.mp-server-input input {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-size: 13px;
+    color: #aaa;
+    text-align: center;
+    width: 200px;
+    outline: none;
+    transition: all 0.3s;
+}
+
+.mp-server-input input:focus {
+    border-color: rgba(255,255,255,0.25);
+    color: #fff;
+}
+
+.mp-server-hint {
+    font-size: 11px;
+    color: rgba(255,255,255,0.3);
+    margin-top: 6px;
+    line-height: 1.4;
+    max-width: 280px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* 错误消息提示 */
+.mp-error-msg {
+    position: fixed;
+    z-index: 200;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    max-width: 320px;
+    padding: 20px 24px;
+    background: rgba(40, 20, 20, 0.95);
+    border: 1px solid rgba(255, 80, 60, 0.3);
+    border-radius: 16px;
+    color: #ff8866;
+    font-size: 13px;
+    line-height: 1.6;
+    text-align: center;
+    white-space: pre-line;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(10px);
+    animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translate(-50%, -50%) scale(0.95); }
+    to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+/* 房间等待界面 - 全新设计 */
+#room-lobby {
+    position: fixed;
+    z-index: 100;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px 16px 30px;
+    background: radial-gradient(ellipse at 50% 0%, #1a2a4e 0%, #1a1a3e 40%, #0f0f2a 100%);
+    color: #fff;
+    overflow-y: auto;
+}
+
+#room-lobby .back-btn {
+    position: absolute;
+    left: 12px;
+    top: 12px;
+}
+
+.rl-header {
+    text-align: center;
+    margin: 10px 0 16px 0;
+}
+
+.room-code-label {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.4);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+
+.room-code-big {
+    font-size: 44px;
+    font-weight: bold;
+    color: #ffd700;
+    letter-spacing: 12px;
+    text-shadow: 0 0 40px rgba(255, 215, 0, 0.25), 0 0 80px rgba(255, 215, 0, 0.1);
+    font-family: 'Courier New', monospace;
+    padding: 10px 24px;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 16px;
+    border: 2px solid rgba(255, 215, 0, 0.15);
+    display: inline-block;
+}
+
+.room-code-hint {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.35);
+    margin-top: 10px;
+    line-height: 1.4;
+    max-width: 280px;
+    text-align: center;
+}
+
+/* 房间设置面板 */
+.rl-settings {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 16px;
+    padding: 14px 18px;
+    margin: 8px 0;
+    width: 100%;
+    max-width: 400px;
+    backdrop-filter: blur(10px);
+}
+
+.rl-settings-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+    gap: 10px;
+}
+
+.rl-settings-row:last-child {
+    margin-bottom: 0;
+}
+
+.rl-setting-label {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.6);
+    min-width: 45px;
+    flex-shrink: 0;
+    font-weight: 500;
+}
+
+.rl-setting-options {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.rl-setting-opt {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 6px 14px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+    transition: all 0.25s;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+}
+
+.rl-setting-opt:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #fff;
+}
+
+.rl-setting-opt.selected {
+    background: rgba(68, 170, 102, 0.2);
+    border-color: #44aa66;
+    color: #88ffaa;
+    box-shadow: 0 0 20px rgba(68, 170, 102, 0.15);
+}
+
+.rl-settings-desc {
+    text-align: center;
+    font-size: 13px;
+    color: #88ffaa;
+    margin-top: 8px;
+    font-weight: 500;
+}
+
+/* 3 个角色位 - 卡片式设计 */
+.rl-slots {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin: 14px 0;
+    width: 100%;
+    max-width: 420px;
+}
+
+.rl-slot {
+    flex: 1;
+    max-width: 120px;
+    aspect-ratio: 3 / 4;
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 12px 6px;
+    transition: all 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    position: relative;
+    overflow: hidden;
+}
+
+.rl-slot-empty {
+    border: 2px dashed rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.rl-slot-filled {
+    border: 2px solid rgba(100, 200, 255, 0.25);
+    background: rgba(100, 200, 255, 0.05);
+    box-shadow: 0 4px 20px rgba(100, 200, 255, 0.08);
+}
+
+.rl-slot-ready {
+    border-color: rgba(100, 255, 150, 0.35);
+    background: rgba(100, 255, 150, 0.06);
+    box-shadow: 0 4px 20px rgba(100, 255, 150, 0.1);
+}
+
+.rl-slot-host {
+    border-color: rgba(255, 215, 0, 0.35);
+    background: rgba(255, 215, 0, 0.06);
+    box-shadow: 0 4px 20px rgba(255, 215, 0, 0.1);
+}
+
+.rl-slot-host::after {
+    content: '👑';
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    font-size: 16px;
+    filter: drop-shadow(0 2px 8px rgba(255, 215, 0, 0.5));
+}
+
+.slot-avatar {
+    font-size: 34px;
+    margin-bottom: 6px;
+    width: 56px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.05);
+    overflow: hidden;
+}
+
+.slot-avatar canvas {
+    width: 56px;
+    height: 65px;
+}
+
+.slot-name {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.8);
+    text-align: center;
+    line-height: 1.2;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+.slot-status {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.4);
+    margin-top: 3px;
+}
+
+/* 角色选择 */
+.rl-char-select {
+    margin: 10px 0 14px;
+    text-align: center;
+    width: 100%;
+    max-width: 320px;
+}
+
+.rl-char-label {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.5);
+    margin-bottom: 10px;
+    letter-spacing: 1px;
+}
+
+.rl-char-options {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+}
+
+.rl-char-option {
+    background: rgba(255, 255, 255, 0.04);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: 14px;
+    padding: 12px 18px;
+    cursor: pointer;
+    transition: all 0.25s;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    text-align: center;
+    flex: 1;
+    max-width: 120px;
+    user-select: none;
+}
+
+.rl-char-option:hover {
+    background: rgba(255, 255, 255, 0.08);
+    transform: translateY(-2px);
+}
+
+.rl-char-option:active {
+    transform: translateY(0);
+}
+
+.rl-char-option.selected {
+    border-color: #ffd700;
+    background: rgba(255, 215, 0, 0.08);
+    box-shadow: 0 0 25px rgba(255, 215, 0, 0.1);
+}
+
+.rl-char-option.disabled {
+    opacity: 0.4;
+}
+
+.rl-char-option canvas {
+    display: block;
+    margin: 0 auto 4px;
+    width: 60px;
+    height: 70px;
+}
+
+.rl-char-name {
+    font-size: 13px;
+    font-weight: bold;
+}
+
+/* 操作按钮 */
+.rl-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-top: 6px;
+}
+
+.rl-actions .mp-btn {
+    min-width: 120px;
+}
+
+#ready-btn.ready {
+    background: linear-gradient(135deg, #44aa66, #66dd88);
+    box-shadow: 0 4px 20px rgba(68, 170, 102, 0.4);
+}
+
+/* 房间操作按钮样式 */
+#ready-btn, #start-btn {
+    animation: none;
+}
+
+#ready-btn.ready {
+    animation: readyPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes readyPulse {
+    0%, 100% { box-shadow: 0 4px 20px rgba(68, 170, 102, 0.4); }
+    50% { box-shadow: 0 4px 30px rgba(68, 170, 102, 0.7); }
+}
+
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* 旧样式保留兼容 */
+.room-code-hint {
+    font-size: 12px;
+    color: #888;
+    margin-top: 8px;
+}
+
+.player-list-item {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    font-size: 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.player-status {
+    font-size: 12px;
+    color: #aaa;
+}
+
+.room-lobby-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 20px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+#ready-btn {
+    min-width: 120px;
+}
+
+#ready-btn.ready {
+    background: linear-gradient(135deg, #44aa66, #66dd88);
+    box-shadow: 0 4px 20px rgba(68, 170, 102, 0.4);
+}
+
+/* 联机玩家列表 HUD */
+#mp-player-list {
+    margin-top: 8px;
+    min-width: 100px;
+}
+
+#mp-player-list-content {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: 4px;
+}
+
+.mp-player-list-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 6px;
+    padding: 2px 8px;
+}
+
+.mp-player-list-item .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.mp-player-list-item .dot.online {
+    background: #44ff88;
+    box-shadow: 0 0 4px #44ff88;
+}
+
+.mp-player-list-item .dot.offline {
+    background: #ff4444;
+}
+
+.mp-player-list-item .name {
+    color: #ddd;
+    flex: 1;
+}
+
+.mp-player-list-item .hp-bar-mini {
+    width: 40px;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.mp-player-list-item .hp-fill-mini {
+    height: 100%;
+    background: linear-gradient(90deg, #44ff88, #88ffbb);
+    border-radius: 2px;
+    transition: width 0.3s;
+}
+
+.mp-player-list-item .energy-bar-mini {
+    font-size: 10px;
+    color: #66ffcc;
+    margin-left: 4px;
+    white-space: nowrap;
+}
+
+/* 连接状态指示器 */
+#connection-status {
+    font-size: 16px;
+    cursor: default;
+    margin-right: 8px;
+    animation: connection-pulse 2s ease-in-out infinite;
+}
+
+#connection-status.connected {
+    opacity: 0.7;
+}
+
+#connection-status.disconnected {
+    opacity: 0.3;
+    animation: connection-fade 1s ease-in-out infinite;
+}
+
+@keyframes connection-pulse {
+
+    0%,
+    100% {
+        opacity: 0.6;
+    }
+
+    50% {
+        opacity: 1;
+    }
+}
+
+@keyframes connection-fade {
+
+    0%,
+    100% {
+        opacity: 0.2;
+    }
+
+    50% {
+        opacity: 0.8;
+    }
+}
+
+/* 创建房间加载提示 */
+#mp-creating {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 30px;
+    gap: 12px;
+}
+
+#mp-creating.hidden {
+    display: none !important;
+}
+
+.mp-creating-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(255, 255, 255, 0.1);
+    border-top: 3px solid #44ff88;
+    border-radius: 50%;
+    animation: creating-spin 0.8s linear infinite;
+}
+
+@keyframes creating-spin {
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+.mp-creating-text {
+    color: #88ffaa;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+/* 加入房间重试提示 */
+.mp-retry-hint {
+    font-size: 12px;
+    color: #ffaa44;
+    text-align: center;
+    margin-top: 8px;
+    animation: retry-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes retry-pulse {
+
+    0%,
+    100% {
+        opacity: 0.5;
+    }
+
+    50% {
+        opacity: 1;
+    }
+}
+
+/* 连接错误详情 */
+.mp-error-detail {
+    font-size: 11px;
+    color: #ff8888;
+    text-align: center;
+    margin-top: 4px;
+    padding: 8px;
+    background: rgba(255, 0, 0, 0.1);
+    border-radius: 8px;
+}
+
+/* ============================================================
+   联机大厅响应式适配（手机/平板）
+   ============================================================ */
+@media (max-width: 480px) {
+    #multiplayer-lobby {
+        padding-top: 32px;
+    }
+    #multiplayer-lobby h1 {
+        font-size: 20px;
+    }
+    .mp-lobby-content {
+        width: 96%;
+        max-width: 100%;
+    }
+    .mp-name-input input {
+        width: 90%;
+        max-width: 280px;
+        font-size: 15px;
+    }
+    .mp-actions {
+        gap: 10px;
+    }
+    button.mp-action-card {
+        padding: 18px 10px 14px;
+        max-width: 140px;
+    }
+    .mp-icon {
+        font-size: 32px;
+    }
+    .mp-label {
+        font-size: 15px;
+    }
+    .mp-server-input input {
+        width: 90%;
+        max-width: 260px;
+    }
+    .room-code-input {
+        width: 160px;
+        font-size: 22px;
+        letter-spacing: 6px;
+    }
+    /* 房间等待界面 */
+    #room-lobby {
+        padding: 12px 10px 20px;
+    }
+    .room-code-big {
+        font-size: 32px;
+        letter-spacing: 8px;
+        padding: 8px 16px;
+    }
+    .rl-settings {
+        padding: 10px 12px;
+    }
+    .rl-setting-opt {
+        padding: 5px 10px;
+        font-size: 11px;
+    }
+    .rl-slots {
+        gap: 8px;
+        max-width: 100%;
+    }
+    .rl-slot {
+        max-width: 100px;
+    }
+    .rl-char-options {
+        gap: 10px;
+    }
+    .rl-char-option {
+        padding: 8px 12px;
+        max-width: 100px;
+    }
+    .rl-char-option canvas {
+        width: 48px;
+        height: 56px;
+    }
+    .rl-actions .mp-btn {
+        min-width: 100px;
+        padding: 10px 16px;
+        font-size: 14px;
+    }
+}
+
+@media (max-width: 360px) {
+    .room-code-big {
+        font-size: 26px;
+        letter-spacing: 6px;
+    }
+    .rl-slots {
+        gap: 6px;
+    }
+    .rl-slot {
+        max-width: 88px;
+    }
+    button.mp-action-card {
+        max-width: 120px;
+        padding: 14px 8px 12px;
+    }
+    .mp-icon {
+        font-size: 28px;
+    }
+}
+
+/* ============================================================
+   HUD 视觉重做
+   设计语言：明亮 3D 场景之上使用「奶油纸卡 + 墨色文字 + 章节主色点缀」，
+   替代原先的黑色胶囊，避免与场景形成割裂感。
+   ============================================================ */
+:root {
+    --ui-paper: rgba(255, 253, 248, 0.93);
+    --ui-paper-solid: #fffdf8;
+    --ui-line: rgba(88, 116, 96, 0.14);
+    --ui-line-soft: rgba(255, 255, 255, 0.9);
+    --ui-ink: #24352c;
+    --ui-ink-soft: #6c7f72;
+    --ui-ink-mute: #98a89e;
+    --ui-gold: #f2b53c;
+    --ui-gold-deep: #cf8f16;
+    --ui-mint: #17b884;
+    --ui-coral: #ff5f4d;
+    --ui-radius: 16px;
+    --ui-radius-sm: 12px;
+    --ui-shadow: 0 10px 24px rgba(26, 45, 32, 0.16), 0 1px 0 rgba(255, 255, 255, 0.9) inset;
+    --ui-shadow-sm: 0 5px 14px rgba(26, 45, 32, 0.13), 0 1px 0 rgba(255, 255, 255, 0.9) inset;
+    --ui-blur: saturate(1.5) blur(10px);
+}
+
+/* ---------- 顶部状态卡 ---------- */
+.hud-item {
+    position: relative;
+    background: var(--ui-paper);
+    -webkit-backdrop-filter: var(--ui-blur);
+    backdrop-filter: var(--ui-blur);
+    border: 1px solid var(--ui-line-soft);
+    border-radius: var(--ui-radius);
+    padding: 8px 15px 9px 16px;
+    box-shadow: var(--ui-shadow);
+    min-width: 108px;
+    transition: transform 0.18s ease;
+}
+
+/* 左侧彩色竖条：让三张卡一眼可分（生命=红、能量=薄荷、角色=金） */
+#hud-left>.hud-item::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 9px;
+    bottom: 9px;
+    width: 4px;
+    border-radius: 0 4px 4px 0;
+    background: var(--ui-accent, var(--ui-gold));
+}
+
+#hud-left>.hud-item:nth-of-type(1) {
+    --ui-accent: linear-gradient(180deg, #ff9d7a, #ff5f4d);
+}
+
+#hud-left>.hud-item:nth-of-type(2) {
+    --ui-accent: linear-gradient(180deg, #59e0b6, #16a97a);
+}
+
+#hud-left>.hud-item:nth-of-type(3) {
+    --ui-accent: linear-gradient(180deg, #ffd97a, #f0a83a);
+}
+
+.hud-item .label {
+    color: var(--ui-ink-soft);
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    line-height: 1.3;
+}
+
+.hud-item .value {
+    color: var(--ui-ink);
+    font-size: 17px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+}
+
+.hud-item .value.value-mint {
+    color: var(--ui-mint);
+}
+
+/* ---------- 进度条 ---------- */
+.hp-bar,
+.energy-bar {
+    height: 7px;
+    border-radius: 99px;
+    overflow: hidden;
+    margin-top: 5px;
+    box-shadow: inset 0 1px 2px rgba(28, 44, 34, 0.16);
+}
+
+.hp-bar {
+    width: 118px;
+    background: rgba(255, 95, 77, 0.16);
+}
+
+.energy-bar {
+    width: 118px;
+    background: rgba(23, 184, 132, 0.16);
+}
+
+.hp-fill {
+    height: 100%;
+    border-radius: 99px;
+    background: linear-gradient(90deg, #ff9d7a, #ff5140);
+    box-shadow: 0 0 8px rgba(255, 90, 70, 0.45);
+    transition: width 0.3s ease;
+}
+
+.energy-fill {
+    height: 100%;
+    border-radius: 99px;
+    background: linear-gradient(90deg, #59e0b6, #16a97a);
+    box-shadow: 0 0 8px rgba(30, 200, 150, 0.45);
+    transition: width 0.3s ease;
+}
+
+.energy-sub {
+    color: var(--ui-ink-mute);
+    font-size: 10px;
+    font-weight: 700;
+    margin-top: 4px;
+    letter-spacing: 0.02em;
+}
+
+.level-text {
+    display: inline-block;
+    margin-top: 5px;
+    padding: 1px 9px;
+    border-radius: 99px;
+    background: linear-gradient(135deg, #ffe3a0, #f2b53c);
+    color: #5a3c05;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.05em;
+    box-shadow: 0 2px 6px rgba(207, 143, 22, 0.32);
+}
+
+/* ---------- 退出 / 返回按钮 ---------- */
+.back-btn {
+    border: 1px solid var(--ui-line-soft);
+    border-radius: var(--ui-radius-sm);
+    background: var(--ui-paper);
+    -webkit-backdrop-filter: var(--ui-blur);
+    backdrop-filter: var(--ui-blur);
+    color: var(--ui-ink);
+    font-weight: 800;
+    box-shadow: var(--ui-shadow-sm);
+}
+
+.back-btn:hover {
+    border-color: rgba(242, 181, 60, 0.7);
+    background: var(--ui-paper-solid);
+    color: var(--ui-gold-deep);
+}
+
+#hud-back-btn {
+    padding: 7px 14px;
+    border-radius: var(--ui-radius-sm);
+}
+
+/* ---------- 小地图 ---------- */
+#minimap {
+    top: 60px;
+    border-radius: var(--ui-radius);
+    border: 2px solid var(--ui-line-soft);
+    background: rgba(255, 253, 248, 0.9);
+    -webkit-backdrop-filter: var(--ui-blur);
+    backdrop-filter: var(--ui-blur);
+    box-shadow: var(--ui-shadow);
+}
+
+#minimap canvas {
+    border-radius: 14px;
+}
+
+/* ---------- 技能状态 ---------- */
+#skill-bar {
+    background: var(--ui-paper);
+    -webkit-backdrop-filter: var(--ui-blur);
+    backdrop-filter: var(--ui-blur);
+    border: 1px solid var(--ui-line-soft);
+    border-radius: 14px;
+    padding: 7px 12px;
+    box-shadow: var(--ui-shadow-sm);
+    gap: 4px;
+}
+
+.skill-label {
+    color: var(--ui-ink-soft);
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+}
+
+#skill-status {
+    color: var(--ui-gold-deep);
+    font-size: 12px;
+    font-weight: 900;
+    text-shadow: none;
+}
+
+#skill-cd-bar {
+    height: 5px;
+    border-radius: 99px;
+    background: rgba(88, 116, 96, 0.14);
+    box-shadow: inset 0 1px 2px rgba(28, 44, 34, 0.14);
+}
+
+#skill-cd-fill {
+    border-radius: 99px;
+    background: linear-gradient(90deg, #ffd166, #f0a83a);
+    box-shadow: 0 0 8px rgba(242, 181, 60, 0.5);
+}
+
+#skill-cd-text {
+    color: var(--ui-ink-mute);
+    font-size: 10px;
+    font-weight: 700;
+}
+
+/* ---------- 增益 ---------- */
+#buff-bar {
+    background: var(--ui-paper);
+    -webkit-backdrop-filter: var(--ui-blur);
+    backdrop-filter: var(--ui-blur);
+    border: 1px solid var(--ui-line-soft);
+    border-radius: 14px;
+    padding: 5px 10px;
+    box-shadow: var(--ui-shadow-sm);
+}
+
+.buff-label {
+    color: var(--ui-ink-soft);
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+}
+
+.buff-icon {
+    background: rgba(88, 116, 96, 0.09);
+    border: 1px solid var(--ui-line);
+}
+
+.buff-icon .count {
+    background: rgba(36, 53, 44, 0.88);
+    color: #fff;
+    font-weight: 800;
+}
+
+/* ---------- 怪物血条 ---------- */
+#monster-hp {
+    background: var(--ui-paper);
+    -webkit-backdrop-filter: var(--ui-blur);
+    backdrop-filter: var(--ui-blur);
+    border: 1px solid var(--ui-line-soft);
+    border-radius: 14px;
+    padding: 5px 16px;
+    box-shadow: var(--ui-shadow-sm);
+}
+
+#monster-hp .label {
+    color: var(--ui-ink);
+    font-size: 11px;
+    font-weight: 800;
+}
+
+#monster-hp-bar {
+    height: 7px;
+    border-radius: 99px;
+    background: rgba(255, 95, 77, 0.16);
+    box-shadow: inset 0 1px 2px rgba(28, 44, 34, 0.16);
+}
+
+#monster-hp-fill {
+    border-radius: 99px;
+    background: linear-gradient(90deg, #ff9d7a, #ff3d2e);
+    box-shadow: 0 0 8px rgba(255, 70, 50, 0.45);
+}
+
+/* ---------- 武器栏 ---------- */
+.weapon-btn {
+    position: relative;
+    width: 84px;
+    height: 62px;
+    border-radius: var(--ui-radius);
+    background: var(--ui-paper);
+    border: 2px solid var(--ui-line-soft);
+    color: var(--ui-ink);
+    font-weight: 800;
+    box-shadow: var(--ui-shadow-sm);
+    -webkit-backdrop-filter: var(--ui-blur);
+    backdrop-filter: var(--ui-blur);
+    transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.weapon-btn:hover {
+    transform: translateY(-2px);
+    border-color: rgba(242, 181, 60, 0.6);
+    box-shadow: 0 8px 18px rgba(26, 45, 32, 0.18);
+}
+
+.weapon-btn.active {
+    border-color: var(--ui-gold);
+    background: linear-gradient(180deg, #fffaf0, #ffedc4);
+    color: #6a4708;
+    transform: translateY(-3px);
+    box-shadow: 0 10px 22px rgba(207, 143, 22, 0.28), 0 0 0 3px rgba(242, 181, 60, 0.18);
+}
+
+.weapon-btn.active::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    bottom: -9px;
+    width: 6px;
+    height: 6px;
+    margin-left: -3px;
+    border-radius: 50%;
+    background: var(--ui-gold);
+    box-shadow: 0 0 10px var(--ui-gold);
+}
+
+.weapon-btn.locked {
+    opacity: 0.4;
+    filter: grayscale(0.6);
+}
+
+/* ---------- 浮动提示 ---------- */
+#message {
+    padding: 6px 18px;
+    border-radius: 99px;
+    font-size: 20px;
+    font-weight: 900;
+    letter-spacing: 0.01em;
+    text-shadow: 0 2px 0 rgba(30, 20, 0, 0.22), 0 0 16px currentColor;
+    top: 74px;
+}
+
+/* 柔和暗角底衬，保证任何字色在明亮场景上都清晰可读 */
+/* 手电筒状态胶囊 */
+#flashlight-status {
+    background: var(--ui-paper);
+    border: 1px solid var(--ui-line-soft);
+    border-radius: 99px;
+    color: var(--ui-ink);
+    font-weight: 700;
+    box-shadow: var(--ui-shadow-sm);
+}
+
+/* 联机玩家列表跟随纸卡风格 */
+#mp-player-list {
+    background: var(--ui-paper);
+    border-radius: var(--ui-radius);
+    border: 1px solid var(--ui-line-soft);
+    box-shadow: var(--ui-shadow-sm);
+}
+
+
+/* ============================================================
+   菜单界面视觉重做（角色 / 难度 / 章节）
+   与游戏内 HUD 统一为「明亮天光背景 + 纸卡 + 彩色点缀」
+   ============================================================ */
+
+/* ---------- 共用：明亮天光背景 ---------- */
+#char-select,
+#diff-select,
+#chapter-select {
+    background:
+        radial-gradient(120% 80% at 18% 0%, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0) 55%),
+        radial-gradient(90% 70% at 88% 12%, rgba(255, 228, 168, 0.55) 0%, rgba(255, 228, 168, 0) 60%),
+        linear-gradient(180deg, #bfe6ff 0%, #e2f4ff 38%, #fbf4e4 100%);
+}
+
+/* 底部一层柔和的草地色，让浅色背景不飘 */
+#char-select::after,
+#diff-select::after,
+#chapter-select::after {
+    content: '';
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 26vh;
+    pointer-events: none;
+    background: linear-gradient(180deg, rgba(150, 205, 120, 0) 0%, rgba(150, 205, 120, 0.35) 100%);
+    z-index: -1;
+}
+
+/* ---------- 共用：标题与副标题 ---------- */
+#char-select h1,
+#diff-select h1,
+#chapter-select h1 {
+    color: #1d7fb8;
+    text-shadow: 0 2px 0 #ffffff, 0 8px 20px rgba(29, 127, 184, 0.22);
+    letter-spacing: 0.05em;
+    font-weight: 900;
+}
+
+#char-select .subtitle,
+#diff-select .subtitle,
+#chapter-select .subtitle {
+    color: #78909c;
+    font-weight: 700;
+}
+
+/* ---------- 共用：纸卡 ---------- */
+.char-card,
+.diff-card,
+.chapter-card {
+    background: rgba(255, 255, 255, 0.93);
+    border: 2px solid rgba(255, 255, 255, 0.95);
+    border-radius: 24px;
+    box-shadow: 0 14px 30px rgba(31, 80, 110, 0.14), 0 1px 0 rgba(255, 255, 255, 0.9) inset;
+    transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+}
+
+.char-card:hover {
+    border-color: rgba(242, 181, 60, 0.85);
+    transform: translateY(-10px);
+    box-shadow: 0 22px 44px rgba(207, 143, 22, 0.24), 0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+.diff-card:hover {
+    border-color: rgba(242, 181, 60, 0.85);
+    transform: translateY(-8px);
+    box-shadow: 0 20px 40px rgba(207, 143, 22, 0.22), 0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+/* ---------- 角色卡 ---------- */
+.char-card .avatar canvas {
+    border-radius: 16px;
+    box-shadow: 0 6px 16px rgba(31, 80, 110, 0.12);
+    background: linear-gradient(180deg, #eaf6ff, #fdf7ea);
+}
+
+.char-card .name {
+    color: #24352c;
+    font-weight: 900;
+}
+
+.char-card .tagline {
+    color: #7a8c94;
+    font-weight: 600;
+}
+
+.char-card .skill-desc {
+    color: #5e7079;
+}
+
+.char-card .skill-tag {
+    border-radius: 99px;
+    padding: 5px 14px;
+    font-weight: 900;
+    letter-spacing: 0.04em;
+    box-shadow: 0 4px 12px rgba(31, 80, 110, 0.16);
+}
+
+.char-qike .skill-tag {
+    background: linear-gradient(135deg, #ffa640, #ff7a18);
+}
+
+.char-miaomiao .skill-tag {
+    background: linear-gradient(135deg, #b07cff, #8a4df0);
+}
+
+/* ---------- 难度卡 ---------- */
+.diff-card .icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 76px;
+    height: 76px;
+    margin: 0 auto 12px;
+    border-radius: 50%;
+    background: linear-gradient(180deg, #ffffff, #eef7ff);
+    box-shadow: 0 8px 18px rgba(31, 80, 110, 0.14), 0 0 0 4px rgba(255, 255, 255, 0.7);
+    font-size: 38px;
+}
+
+.diff-card .label {
+    color: #24352c;
+    font-weight: 900;
+}
+
+.diff-card .desc {
+    color: #7a8c94;
+}
+
+.diff-card .age {
+    display: inline-block;
+    margin-top: 10px;
+    padding: 2px 10px;
+    border-radius: 99px;
+    background: linear-gradient(135deg, #ffe3a0, #f2b53c);
+    color: #5a3c05;
+    font-weight: 900;
+}
+
+/* ---------- 章节卡 ---------- */
+.chapter-card {
+    border-radius: 20px;
+    box-shadow: 0 10px 22px rgba(31, 80, 110, 0.12), 0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+.chapter-card::before {
+    height: 5px;
+    opacity: 1;
+}
+
+.chapter-card:hover {
+    border-color: var(--chapter-color);
+    transform: translateY(-6px);
+    box-shadow: 0 18px 34px rgba(31, 80, 110, 0.2), 0 1px 0 rgba(255, 255, 255, 0.9) inset;
+}
+
+.chapter-card .chapter-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    background: linear-gradient(180deg, #ffffff, #f2f8fc);
+    box-shadow: 0 6px 14px rgba(31, 80, 110, 0.14);
+    font-size: 28px;
+    filter: drop-shadow(0 0 10px var(--chapter-color));
+    margin: 8px 0;
+}
+
+.chapter-card .chapter-num {
+    font-weight: 900;
+    letter-spacing: 0.08em;
+}
+
+.chapter-card .chapter-name {
+    color: #24352c;
+    font-weight: 900;
+}
+
+.chapter-card .chapter-desc {
+    color: #7a8c94;
+}
+
+.chapter-card .chapter-energy {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 2px 10px;
+    border-radius: 99px;
+    background: rgba(23, 184, 132, 0.14);
+    color: #0e9e73;
+    font-weight: 900;
+}
+
+/* ---------- 加载页 ---------- */
+#loading {
+    background:
+        radial-gradient(80% 60% at 50% 20%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 60%),
+        linear-gradient(180deg, #bfe6ff 0%, #e2f4ff 45%, #fbf4e4 100%);
+    color: #1d7fb8;
+    text-shadow: 0 2px 0 #ffffff;
+}
+
+#loading .spinner {
+    border-color: rgba(29, 127, 184, 0.2);
+    border-top-color: #1d7fb8;
+}
+
+/* 构建版本标记：确认页面是否为最新代码（极小、极淡，不干扰交互） */
+.build-tag {
+    position: fixed;
+    right: 10px;
+    bottom: 6px;
+    z-index: 300;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    color: rgba(50, 80, 68, 0.42);
+    background: rgba(255, 255, 255, 0.55);
+    padding: 1px 7px;
+    border-radius: 99px;
+    pointer-events: none;
+    user-select: none;
+}
+
+/* ============================================================
+   宝箱开启进度条
+   靠近宝箱后停留片刻才开箱，避免走过路过被强制弹答题打断节奏
+   ============================================================ */
+#chest-progress {
+    position: fixed;
+    left: 50%;
+    bottom: 112px;
+    transform: translateX(-50%);
+    z-index: 55;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 18px 9px 12px;
+    border-radius: 999px;
+    background: rgba(255, 253, 248, 0.95);
+    -webkit-backdrop-filter: var(--ui-blur);
+    backdrop-filter: var(--ui-blur);
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    box-shadow: 0 10px 24px rgba(26, 45, 32, 0.18);
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 0.15s ease;
+}
+
+/* 注意：必须写 #id.hidden，光靠 .hidden 会被 #chest-progress 的 display 压掉 */
+#chest-progress.hidden {
+    display: none;
+    opacity: 0;
+}
+
+#chest-progress .cp-icon {
+    font-size: 20px;
+    line-height: 1;
+}
+
+#chest-progress .cp-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+#chest-progress .cp-label {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    color: #6c7f72;
+}
+
+#chest-progress .cp-track {
+    width: 150px;
+    height: 8px;
+    border-radius: 999px;
+    background: rgba(88, 116, 96, 0.14);
+    box-shadow: inset 0 1px 2px rgba(28, 44, 34, 0.16);
+    overflow: hidden;
+}
+
+#chest-progress .cp-fill {
+    height: 100%;
+    width: 0;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #b9a2ff, #7c5cff);
+    box-shadow: 0 0 8px rgba(124, 92, 255, 0.45);
+    transition: width 0.08s linear;
+}
+
+/* 金色宝箱：整条进度用金色，和普通宝箱一眼区分 */
+#chest-progress.golden .cp-label {
+    color: #cf8f16;
+}
+
+#chest-progress.golden .cp-fill {
+    background: linear-gradient(90deg, #ffe08a, #f2b53c);
+    box-shadow: 0 0 10px rgba(242, 181, 60, 0.55);
+}
+
+#chest-progress.golden {
+    border-color: rgba(242, 181, 60, 0.55);
+}
+
+/* 宝箱冷却态：灰化进度条并显示倒计时 */
+#chest-progress.cooling .cp-fill {
+    background: rgba(150, 165, 155, 0.5);
+    box-shadow: none;
+}
+
+#chest-progress.cooling .cp-label {
+    color: #98a89e;
+}
+
+#chest-progress.cooling {
+    border-color: rgba(88, 116, 96, 0.2);
+}
+
+/* 联机大厅：服务器地址诊断（页面地址 → WS 地址 → 连通性） */
+.mp-diag {
+    margin-top: 10px;
+    font-size: 11px;
+    line-height: 1.7;
+    text-align: center;
+    max-width: 300px;
+    margin-left: auto;
+    margin-right: auto;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.55);
+    /* 内容用 \n 分行，必须保留换行 */
+    white-space: pre-line;
+    word-break: break-all;
+    font-family: Consolas, Menlo, monospace;
+}
+
+.mp-diag.ok {
+    color: #66ddaa;
+    background: rgba(102, 221, 170, 0.10);
+}
+
+.mp-diag.bad {
+    color: #ff8866;
+    background: rgba(255, 136, 102, 0.10);
+}
+
+/* ============================================================
+   联机三页视觉与操作优化
+   · 大厅：昵称 → 主操作 → 加入表单 → 高级选项（技术细节收进折叠区）
+   · 小屏（手机横屏）不溢出
+   · 加入时有明确的「查找中 / 成功 / 失败」状态反馈
+   ============================================================ */
+
+#multiplayer-lobby {
+    padding: 18px 16px 24px;
+    box-sizing: border-box;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+#multiplayer-lobby h1 {
+    font-size: 30px;
+    margin-bottom: 2px;
+}
+
+#multiplayer-lobby .subtitle {
+    font-size: 13px;
+    margin-bottom: 0;
+}
+
+.mp-lobby-content {
+    width: 92%;
+    max-width: 420px;
+    margin-top: 12px;
+}
+
+/* ---- 昵称 ---- */
+.mp-name-input {
+    margin-bottom: 16px;
+}
+
+.mp-name-input label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.55);
+    letter-spacing: 0.08em;
+}
+
+/* 昵称行：输入框 + 「换一个」骰子按钮并排 */
+.mp-name-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.mp-name-input input {
+    flex: 1 1 auto;
+    width: 100%;
+    max-width: 260px;
+    padding: 12px 18px;
+    font-size: 16px;
+    border-radius: 14px;
+}
+
+.mp-name-roll {
+    flex: 0 0 auto;
+    width: 46px;
+    height: 46px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    line-height: 1;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    transition: transform 0.15s ease, background 0.2s ease;
+}
+
+.mp-name-roll:hover {
+    background: rgba(255, 215, 0, 0.16);
+    border-color: rgba(255, 215, 0, 0.5);
+}
+
+.mp-name-roll:active {
+    transform: scale(0.92);
+}
+
+@media (max-height: 560px) {
+    .mp-name-input { margin-bottom: 10px; }
+    .mp-name-input input { padding: 10px 16px; font-size: 15px; }
+    .mp-name-roll { width: 40px; height: 40px; font-size: 17px; }
+}
+
+/* ---- 主操作卡片 ---- */
+.mp-actions {
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+button.mp-action-card {
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 18px;
+    padding: 18px 12px 15px;
+    transition: transform 0.15s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+button.mp-action-card:hover {
+    background: rgba(255, 255, 255, 0.11);
+    border-color: rgba(255, 255, 255, 0.24);
+    transform: translateY(-3px);
+}
+
+button.mp-action-card:active {
+    transform: translateY(0) scale(0.97);
+}
+
+.mp-icon {
+    font-size: 34px;
+    margin-bottom: 6px;
+}
+
+.mp-label {
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+}
+
+.mp-desc {
+    font-size: 11px;
+    line-height: 1.4;
+    margin-top: 3px;
+    color: rgba(255, 255, 255, 0.45);
+}
+
+/* ---- 加入表单 ---- */
+#join-room-form {
+    margin-bottom: 14px;
+    padding: 14px 16px 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 16px;
+    text-align: center;
+}
+
+#join-room-form label {
+    display: block;
+    font-size: 12px;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.55);
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+}
+
+.room-code-input {
+    width: 150px;
+    font-size: 28px;
+    letter-spacing: 10px;
+    padding: 10px 12px 10px 22px;   /* 左侧多留空间，让数字视觉居中 */
+    border-radius: 14px;
+}
+
+/* 加入按钮：再大一点好按 */
+.mp-btn-small {
+    padding: 12px 22px;
+    font-size: 15px;
+    font-weight: 800;
+    border-radius: 12px;
+    min-height: 48px;
+}
+
+/* ---- 加入状态反馈 ---- */
+.mp-join-status {
+    margin-top: 10px;
+    font-size: 12px;
+    line-height: 1.55;
+    text-align: center;
+    min-height: 18px;
+    white-space: pre-line;
+    word-break: break-all;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.mp-join-status.busy { color: #ffd166; }
+.mp-join-status.ok   { color: #66ddaa; }
+.mp-join-status.bad  { color: #ff8866; }
+
+/* ---- 高级选项（折叠）---- */
+.mp-advanced {
+    margin-top: 2px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.mp-advanced summary {
+    cursor: pointer;
+    padding: 10px 14px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: rgba(255, 255, 255, 0.45);
+    list-style: none;
+    text-align: center;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+}
+
+.mp-advanced summary::-webkit-details-marker { display: none; }
+.mp-advanced summary::after { content: ' ▾'; opacity: 0.7; }
+.mp-advanced[open] summary::after { content: ' ▴'; }
+.mp-advanced summary:hover { color: rgba(255, 255, 255, 0.7); }
+
+.mp-advanced-body {
+    padding: 2px 14px 14px;
+}
+
+.mp-server-input {
+    margin: 0 0 8px;
+    text-align: center;
+}
+
+.mp-server-input label {
+    display: block;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.4);
+    margin-bottom: 5px;
+    letter-spacing: 0.06em;
+}
+
+.mp-server-input input {
+    width: 100%;
+    padding: 9px 14px;
+    font-size: 13px;
+    border-radius: 10px;
+    text-align: center;
+}
+
+/* 诊断行在折叠区内，字号收一点 */
+.mp-advanced .mp-diag {
+    font-size: 10px;
+    line-height: 1.6;
+    padding: 5px 8px;
+}
+
+/* ---- 小高度屏（手机横屏）---- */
+@media (max-height: 560px) {
+    #multiplayer-lobby {
+        padding: 12px 14px 16px;
+    }
+
+    #multiplayer-lobby h1 { font-size: 24px; }
+    #multiplayer-lobby .subtitle { font-size: 12px; }
+    .mp-lobby-content { margin-top: 8px; }
+
+    .mp-name-input { margin-bottom: 10px; }
+    .mp-name-input input { padding: 10px 16px; font-size: 15px; }
+
+    .mp-actions { gap: 10px; margin-bottom: 10px; }
+    button.mp-action-card { padding: 14px 10px 12px; border-radius: 14px; }
+    .mp-icon { font-size: 26px; margin-bottom: 4px; }
+    .mp-label { font-size: 14px; }
+    .mp-desc { font-size: 10px; }
+
+    #join-room-form { padding: 10px 12px 8px; margin-bottom: 10px; }
+    .room-code-input { width: 128px; font-size: 24px; letter-spacing: 8px; padding: 8px 10px 8px 18px; }
+    .mp-btn-small { padding: 10px 18px; font-size: 14px; min-height: 42px; }
+    .mp-join-status { font-size: 11px; margin-top: 7px; }
+    .mp-advanced summary { padding: 8px 12px; font-size: 11px; }
+}
+
+/* ---- 极小高度屏 ---- */
+@media (max-height: 420px) {
+    #multiplayer-lobby h1 { font-size: 21px; }
+    #multiplayer-lobby .subtitle { display: none; }
+    button.mp-action-card { padding: 11px 8px 10px; }
+    .mp-icon { font-size: 22px; }
+    .mp-label { font-size: 13px; }
+    .mp-desc { display: none; }
+    .room-code-input { width: 116px; font-size: 21px; }
+}
+
+/* ============================================================
+   游戏内 HUD / 控件 排版与视觉统一
+   统一 8px 网格，分三个带：
+     顶部带  z 90  可交互  → HUD（生命/能量/角色 + 退出按钮）
+     第二带  z 50  纯展示  → 增益栏 / 小地图 / 技能状态
+     底部带  z 100 可交互  → 武器栏 + 触屏操作按钮
+   ============================================================ */
+
+/* ---- 关键修复：HUD 必须高于触屏控制层 ----
+   #touch-controls 是 z-index 80，其中的 #touch-look-zone 占据右半屏、
+   从顶部一直到 calc(100% - 120px)，且 pointer-events:auto。
+   HUD 原本只有 50，右上角「退出」按钮实际被这块透明区域盖住，
+   点它只会触发视角拖动 —— 这就是"退出按钮点了没反应"的真正原因。 */
+#hud {
+    z-index: 90;
+    top: 12px;
+    left: 12px;
+    right: 12px;
+}
+
+#hud-left { gap: 10px; }
+#hud-right { gap: 8px; }
+
+/* HUD 数据卡：统一玻璃卡片 */
+.hud-item {
+    background: rgba(0, 0, 0, 0.5);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    padding: 7px 12px;
+    gap: 8px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+    min-height: 38px;
+}
+
+/* 退出按钮：手机上好按 */
+#hud-back-btn {
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 800;
+    border-radius: 10px;
+    min-height: 38px;
+    background: rgba(0, 0, 0, 0.5);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #fff;
+}
+
+/* ---- 第二带：统一 top 60px（HUD 底部 52px + 8px 间距）---- */
+#buff-bar {
+    top: 60px;
+    left: 12px;
+    z-index: 50;
+    background: rgba(0, 0, 0, 0.5);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    padding: 6px 12px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+#minimap {
+    top: 60px;
+    right: 12px;
+    z-index: 50;
+    width: 104px;
+    height: 104px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+
+/* 技能状态：贴着小地图左侧，不再用硬编码的 right:145 */
+#skill-bar {
+    top: 60px;
+    right: 128px;      /* 12(边距) + 104(小地图) + 12(间距) */
+    z-index: 50;
+    background: rgba(0, 0, 0, 0.5);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    padding: 8px 12px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+/* 消息提示：加个胶囊底，草地上也更清楚 */
+#message {
+    top: 76px;
+    z-index: 60;
+    font-size: 19px;
+    padding: 7px 18px;
+    border-radius: 99px;
+    background: rgba(0, 0, 0, 0.42);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    max-width: 70%;
+    text-align: center;
+}
+
+/* 武器栏：与整体间距统一 */
+#weapon-bar-wrap {
+    z-index: 100;
+    bottom: 20px;
+    gap: 6px;
+}
+
+/* ---- 手机横屏（小高度）---- */
+@media (max-height: 560px) {
+    #hud { top: 8px; left: 8px; right: 8px; }
+    .hud-item { padding: 5px 10px; gap: 6px; min-height: 32px; border-radius: 10px; }
+    #hud-back-btn { padding: 6px 11px; font-size: 11px; min-height: 32px; border-radius: 9px; }
+
+    #buff-bar { top: 48px; left: 8px; padding: 4px 10px; border-radius: 10px; }
+    #minimap { top: 48px; right: 8px; width: 84px; height: 84px; border-radius: 10px; }
+    #skill-bar { top: 48px; right: 104px; padding: 5px 10px; border-radius: 10px; font-size: 11px; }
+
+    #message { top: 60px; font-size: 15px; padding: 5px 14px; }
+    #weapon-bar-wrap { bottom: 12px; }
+}
+
+/* 注：极小高度屏（max-height:420px）的规则已移到文件最末尾。
+   媒体查询不增加优先级，只比顺序 —— 放在这里会被下面的基础规则覆盖掉。 */
+
+/* ============================================================
+   HUD 瘦身：角色 + 生命合并一张卡，卡片整体收小
+   退出按钮上移 + 小地图放大，两者彻底不再打架
+   ============================================================ */
+#hud {
+    top: 8px;
+    left: 10px;
+    right: 10px;
+    /* 关键：默认 align-items 是 stretch，左侧卡片一旦被内容撑高，
+       右侧的退出按钮就会跟着垂直居中往下掉，正好压在小地图上。
+       改成 flex-start 后按钮永远钉在顶边。 */
+    align-items: flex-start;
+}
+
+#hud-left { gap: 8px; }
+#hud-right { gap: 6px; }
+
+.hud-item {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 5px 10px;
+    min-height: 0;
+    min-width: 0;
+    border-radius: 10px;
+    gap: 4px;
+}
+
+/* 暗色玻璃卡上的文字必须反过来：前面的纸卡主题把 value 设成了近黑色，
+   配深色底几乎看不见，这里显式改成白色 */
+.hud-item .label {
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 9.5px;
+    letter-spacing: 0.04em;
+}
+
+.hud-item .value {
+    color: #fff;
+    font-size: 15px;
+}
+
+.hud-item .value.value-mint { color: #4fe0ae; }
+
+.hud-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* ---- 角色 + 生命卡 ---- */
+/* 宽度要给够：血量文案是 "100/100" 这种带上限的形式，
+   卡片太窄的话血条会被挤成一条缝 */
+.hud-hero { min-width: 150px; }
+
+.hero-heart {
+    font-size: 11px;
+    line-height: 1;
+    color: #ff8a7a;
+}
+
+.hud-hero .value-hp {
+    font-size: 12px;
+    flex: 0 0 auto;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.hud-hero .hp-bar {
+    flex: 1 1 auto;
+    width: auto;
+    height: 6px;
+    margin-top: 0;
+}
+
+/* ---- 能量卡 ---- */
+.hud-energy { min-width: 124px; }
+
+/* 左侧彩色竖条随新的卡片顺序重排：角色+生命=金，能量=薄荷，队友=蓝 */
+#hud-left>.hud-item:nth-of-type(1) { --ui-accent: linear-gradient(180deg, #ffd97a, #f0a83a); }
+#hud-left>.hud-item:nth-of-type(2) { --ui-accent: linear-gradient(180deg, #59e0b6, #16a97a); }
+#hud-left>.hud-item:nth-of-type(3) { --ui-accent: linear-gradient(180deg, #9fd0ff, #4a90d9); }
+
+.hud-energy .energy-bar {
+    flex: 1 1 auto;
+    width: auto;
+    height: 6px;
+    margin-top: 0;
+}
+
+.energy-sub {
+    margin-top: 0;
+    margin-left: auto;
+    font-size: 9.5px;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.level-text {
+    margin-top: 0;
+    margin-left: auto;
+    padding: 0 7px;
+    font-size: 9.5px;
+    line-height: 16px;
+    border-radius: 99px;
+    background: rgba(242, 181, 60, 0.92);
+    color: #3a2704;
+}
+
+/* ---- 队友卡 ---- */
+#mp-player-list {
+    margin-top: 0;
+    min-width: 92px;
+    padding: 4px 8px;
+}
+
+#mp-player-list-content { gap: 2px; margin-top: 2px; }
+.mp-player-list-item { font-size: 10px; padding: 1px 6px; gap: 5px; border-radius: 5px; }
+.mp-player-list-item .hp-bar-mini { width: 28px; height: 3px; }
+.mp-player-list-item .energy-bar-mini { font-size: 9px; }
+
+/* ---- 退出按钮：更小、更靠上 ---- */
+#hud-back-btn {
+    padding: 5px 11px;
+    font-size: 11.5px;
+    min-height: 30px;
+    border-radius: 9px;
+}
+
+/* ---- 小地图：放大 ---- */
+#minimap {
+    top: 50px;
+    right: 10px;
+    width: 128px;
+    height: 128px;
+}
+
+#skill-bar { top: 50px; right: 150px; }   /* 10(边距) + 128(小地图) + 12(间距) */
+#buff-bar { top: 50px; left: 10px; }
+#message { top: 68px; }
+
+/* ---- 手机横屏（小高度）---- */
+@media (max-height: 560px) {
+    #hud { top: 6px; left: 8px; right: 8px; }
+    .hud-item { padding: 4px 8px; border-radius: 9px; gap: 3px; }
+    .hud-item .value { font-size: 14px; }
+    #hud-back-btn { padding: 4px 10px; font-size: 11px; min-height: 28px; border-radius: 8px; }
+
+    #buff-bar { top: 42px; left: 8px; padding: 4px 10px; border-radius: 10px; }
+    #minimap { top: 42px; right: 8px; width: 108px; height: 108px; }
+    #skill-bar { top: 42px; right: 128px; padding: 5px 10px; border-radius: 10px; font-size: 11px; }
+    #message { top: 58px; }
+}
+
+/* ============================================================
+   第三个角色（爸爸）加入后，选择界面要能放下三张卡
+   ============================================================ */
+.char-grid {
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 100%;
+    padding: 0 12px;
+    box-sizing: border-box;
+}
+
+@media (max-width: 900px) {
+    .char-grid { gap: 20px; }
+    .char-card { width: 212px; padding: 16px; }
+    .char-card .avatar { width: 104px; height: 121px; margin-bottom: 10px; }
+    .char-card .name { font-size: 22px; }
+}
+
+@media (max-width: 700px) {
+    .char-grid { gap: 12px; }
+    .char-card { width: 180px; padding: 12px; }
+    .char-card .avatar { width: 88px; height: 103px; margin-bottom: 8px; }
+    .char-card .name { font-size: 18px; }
+    .char-card .tagline { font-size: 12px; margin-bottom: 6px; }
+    .char-card .skill-desc { font-size: 11px; }
+}
+
+/* ---- 手机横屏（竖向很矮）：把选角页压扁，三张卡一屏放得下 ----
+   用 #char-select 前缀抬高优先级：body.is-touch 那几条规则
+   （0,2,1）靠 ID 数压不过（1,1,0），光写 .char-card 会被它们盖掉。 */
+@media (max-height: 480px) {
+    #char-select { padding-top: 8px; }
+    #char-select h1 { font-size: 22px; margin-bottom: 2px; }
+    #char-select .subtitle { font-size: 11px; margin-bottom: 6px; }
+    #char-select .multiplayer-entry { margin-bottom: 8px; }
+    #char-select .mp-btn { padding: 7px 20px; font-size: 13px; }
+    #char-select .char-grid { gap: 12px; }
+    #char-select .char-card {
+        width: 208px;
+        padding: 8px 10px;
+        border-radius: 14px;
+        border-width: 2px;
+    }
+    #char-select .char-card .avatar { width: 62px; height: 74px; margin-bottom: 4px; }
+    #char-select .char-card .name { font-size: 15px; margin-bottom: 0; }
+    #char-select .char-card .tagline { font-size: 10px; margin-bottom: 4px; }
+    #char-select .char-card .skill-tag { font-size: 10px; padding: 2px 9px; margin-bottom: 3px; }
+    #char-select .char-card .skill-desc { font-size: 10px; line-height: 1.3; }
+}
+
+/* 房间里的角色选项：从 2 个变 3 个，一排放不下就整体收窄 */
+.rl-char-select { max-width: 340px; }
+.rl-char-options { gap: 10px; }
+.rl-char-option { padding: 10px 8px; max-width: 104px; }
+.rl-char-name { font-size: 12px; }
+
+/* ---- 极小高度屏：再收一档，保证地图不占掉太多竖向空间 ---- */
+@media (max-height: 420px) {
+    #hud { top: 4px; left: 6px; right: 6px; }
+    .hud-item { padding: 3px 7px; border-radius: 8px; gap: 3px; }
+    .hud-item .value { font-size: 13px; }
+    .hud-item .label { font-size: 9px; }
+    #hud-back-btn { padding: 3px 8px; font-size: 10px; min-height: 26px; border-radius: 8px; }
+
+    #buff-bar { top: 34px; left: 6px; padding: 3px 8px; }
+    #minimap { top: 34px; right: 6px; width: 92px; height: 92px; }
+    #skill-bar { top: 34px; right: 110px; padding: 4px 8px; font-size: 10px; }
+    #message { top: 44px; font-size: 13px; }
+}
+
+/* ============================================================
+   联机倒地观战 / 救援进度
+   ============================================================ */
+#spectate-hud {
+    position: fixed;
+    left: 50%;
+    top: 18%;
+    transform: translateX(-50%);
+    z-index: 95;
+    min-width: 240px;
+    padding: 12px 20px 14px;
+    border-radius: 16px;
+    background: rgba(20, 8, 8, 0.72);
+    border: 1px solid rgba(255, 107, 107, 0.45);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    text-align: center;
+    pointer-events: none;
+}
+
+#spectate-hud.hidden { display: none; }
+
+#spectate-hud .spec-title {
+    font-size: 17px;
+    font-weight: 800;
+    color: #ff8a8a;
+    letter-spacing: 0.04em;
+}
+
+#spectate-hud .spec-sub {
+    margin-top: 4px;
+    font-size: 11.5px;
+    color: rgba(255, 255, 255, 0.66);
+}
+
+#spectate-hud .spec-track {
+    margin-top: 10px;
+    height: 8px;
+    border-radius: 99px;
+    background: rgba(255, 255, 255, 0.14);
+    overflow: hidden;
+}
+
+#spectate-hud .spec-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 99px;
+    background: linear-gradient(90deg, #66ffcc, #22cc88);
+    transition: width 0.12s linear;
+}
+
+#spectate-hud .spec-pct {
+    margin-top: 6px;
+    font-size: 10.5px;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+#revive-hud {
+    position: fixed;
+    left: 50%;
+    bottom: 22%;
+    transform: translateX(-50%);
+    z-index: 95;
+    min-width: 180px;
+    padding: 9px 16px 11px;
+    border-radius: 14px;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    text-align: center;
+    pointer-events: none;
+}
+
+#revive-hud.hidden { display: none; }
+
+#revive-hud .revive-text {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: #fff;
+}
+
+#revive-hud .revive-track {
+    margin-top: 7px;
+    height: 7px;
+    border-radius: 99px;
+    background: rgba(255, 255, 255, 0.16);
+    overflow: hidden;
+}
+
+#revive-hud .revive-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 99px;
+    background: linear-gradient(90deg, #ffd166, #ff9a3c);
+    transition: width 0.12s linear;
+}
+
+@media (max-height: 480px) {
+    #spectate-hud { top: 12%; padding: 9px 14px 11px; min-width: 200px; }
+    #spectate-hud .spec-title { font-size: 14px; }
+    #spectate-hud .spec-sub { font-size: 10.5px; }
+    #revive-hud { bottom: 26%; padding: 7px 12px 9px; }
+    #revive-hud .revive-text { font-size: 11.5px; }
+}
+
+/* ============================================================
+   联机房间大厅 —— 三栏一屏布局
+   左：选择角色 / 中：房间码 + 玩家位 + 开始 / 右：难度 + 章节
+
+   要点：
+   1. #room-lobby 用 overflow:hidden，从根上杜绝滚动条；
+   2. 所有尺寸走 clamp(vh) —— 手机横屏（约 360px 高）和桌面都能自适应，
+      不用为每个分辨率单独写媒体查询；
+   3. 选择器统一带 #room-lobby 前缀，优先级 (1,1,0) 高于旧的
+      `body.is-touch .rl-xxx`(0,2,1)，可以稳定覆盖历史规则。
+   ============================================================ */
+#room-lobby {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: center;
+    padding: 32px 14px 10px;     /* 顶部 32px 留给"离开"按钮 */
+    overflow: hidden;            /* 一屏显示，不出现滚动条 */
+    box-sizing: border-box;
+}
+
+#room-lobby .back-btn {
+    position: absolute;
+    left: 10px;
+    top: 8px;
+    z-index: 3;
+    transform: scale(0.88);
+    transform-origin: top left;
+}
+
+.rl-panel {
+    display: grid;
+    grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.3fr) minmax(0, 1fr);
+    gap: clamp(6px, 1.3vw, 18px);
+    width: 100%;
+    max-width: 1060px;
+    height: 100%;
+    max-height: 600px;
+    margin: 0 auto;
+    min-height: 0;
+}
+
+.rl-col {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    padding: clamp(6px, 1.3vh, 16px) clamp(8px, 1.2vw, 16px);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.035);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.rl-col-title {
+    flex: 0 0 auto;
+    font-size: clamp(9px, 1.45vh, 12px);
+    letter-spacing: 0.12em;
+    color: rgba(255, 255, 255, 0.42);
+    margin-bottom: clamp(4px, 0.9vh, 10px);
+}
+
+.rl-col-title-gap {
+    margin-top: clamp(6px, 1.4vh, 16px);
+}
+
+/* ---------- 左栏：角色 ---------- */
+#room-lobby .rl-char-options {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(4px, 0.9vh, 10px);
+    flex: 1 1 auto;
+    min-height: 0;
+    justify-content: center;
+}
+
+#room-lobby .rl-char-option {
+    flex: 1 1 0;
+    min-height: 0;
+    max-width: none;
+    width: 100%;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(6px, 1vw, 12px);
+    padding: clamp(3px, 0.8vh, 10px) 6px;
+    border-radius: 12px;
+    box-sizing: border-box;
+}
+
+#room-lobby .rl-char-option canvas {
+    flex: 0 0 auto;
+    display: block;
+    margin: 0;
+    width: clamp(24px, 4.4vh, 44px);
+    height: clamp(28px, 5.1vh, 51px);
+}
+
+#room-lobby .rl-char-name {
+    flex: 0 1 auto;
+    font-size: clamp(11px, 1.75vh, 15px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ---------- 中栏：房间码 + 玩家 + 按钮 ---------- */
+#room-lobby .rl-col-mid {
+    justify-content: space-between;
+    gap: clamp(4px, 1vh, 12px);
+}
+
+#room-lobby .rl-header {
+    flex: 0 0 auto;
+    margin: 0;
+    text-align: center;
+}
+
+#room-lobby .room-code-label {
+    font-size: clamp(9px, 1.35vh, 12px);
+    margin-bottom: clamp(2px, 0.5vh, 6px);
+}
+
+#room-lobby .room-code-big {
+    font-size: clamp(22px, 5vh, 42px);
+    letter-spacing: clamp(3px, 0.9vw, 11px);
+    padding: clamp(2px, 0.6vh, 9px) clamp(8px, 1.4vw, 22px);
+    border-radius: clamp(8px, 1.4vh, 16px);
+    border-width: 2px;
+    line-height: 1.15;
+}
+
+#room-lobby .room-code-hint {
+    font-size: clamp(9px, 1.35vh, 12px);
+    margin-top: clamp(2px, 0.6vh, 8px);
+    max-width: 100%;
+    line-height: 1.35;
+}
+
+/* 玩家位：从 3:4 竖卡改成横向紧凑行，一行一个，节省大量高度 */
+#room-lobby .rl-slots {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(3px, 0.8vh, 8px);
+    flex: 0 1 auto;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    min-height: 0;
+}
+
+#room-lobby .rl-slot {
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: none;
+    aspect-ratio: auto;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: clamp(6px, 1vw, 10px);
+    padding: clamp(3px, 0.8vh, 9px) clamp(8px, 1vw, 12px);
+    border-radius: 12px;
+    min-height: 0;
+    box-sizing: border-box;
+}
+
+#room-lobby .slot-avatar {
+    flex: 0 0 auto;
+    width: clamp(24px, 4.2vh, 34px);
+    height: clamp(24px, 4.2vh, 34px);
+    font-size: clamp(14px, 2.4vh, 20px);
+    margin: 0;
+}
+
+#room-lobby .slot-avatar canvas {
+    width: 100%;
+    height: 100%;
+}
+
+#room-lobby .slot-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: left;
+    font-size: clamp(10px, 1.7vh, 13px);
+}
+
+#room-lobby .slot-status {
+    flex: 0 0 auto;
+    margin: 0;
+    font-size: clamp(9px, 1.4vh, 11px);
+}
+
+#room-lobby .rl-actions {
+    flex: 0 0 auto;
+    margin: 0;
+    gap: clamp(6px, 1vw, 12px);
+    width: 100%;
+}
+
+#room-lobby .rl-actions .mp-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: clamp(5px, 1.2vh, 12px) 8px;
+    font-size: clamp(11px, 1.85vh, 16px);
+    border-radius: 12px;
+}
+
+/* ---------- 右栏：难度 / 章节 ---------- */
+#room-lobby .rl-setting-options {
+    display: grid;
+    gap: clamp(3px, 0.7vh, 7px);
+    flex: 0 0 auto;
+    width: 100%;
+}
+
+#room-lobby .rl-opt-diff,
+#room-lobby .rl-opt-ch {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+#room-lobby .rl-setting-opt {
+    padding: clamp(3px, 0.85vh, 8px) 2px;
+    font-size: clamp(9px, 1.5vh, 12px);
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    box-sizing: border-box;
+    border-radius: 9px;
+}
+
+#room-lobby .rl-settings-desc {
+    flex: 0 0 auto;
+    margin-top: auto;
+    padding-top: clamp(4px, 1vh, 10px);
+    font-size: clamp(10px, 1.6vh, 13px);
+    text-align: center;
+}
+
+/* 加入者视角：右栏不可改，盖一层说明，保持三栏结构不塌 */
+#room-lobby .rl-col.rl-locked {
+    pointer-events: none;
+    opacity: 0.55;
+    position: relative;
+}
+
+#room-lobby .rl-col.rl-locked::after {
+    content: '仅房主可设置';
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: clamp(10px, 1.6vh, 13px);
+    font-weight: 700;
+    color: #ffd166;
+    background: rgba(8, 10, 22, 0.62);
+    border-radius: 16px;
+}
+
+/* ---------- 极矮屏（手机横屏最小高度）再压一档 ---------- */
+@media (max-height: 400px) {
+    #room-lobby { padding: 26px 8px 6px; }
+    .rl-panel { gap: 6px; }
+    .rl-col { padding: 5px 7px; border-radius: 12px; }
+    #room-lobby .room-code-hint { display: none; }
+    #room-lobby .rl-slot { padding: 2px 7px; }
+    #room-lobby .rl-setting-opt { padding: 2px; font-size: 9px; }
+    #room-lobby .rl-settings-desc { padding-top: 3px; font-size: 10px; }
+}
+
+/* ---------- 极窄屏（竖屏手机）改为上下两段，仍不滚动 ---------- */
+@media (max-width: 560px) and (min-height: 560px) {
+    .rl-panel {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, 1fr);
+        max-height: none;
+    }
+    .rl-col-left { grid-column: 1 / 2; grid-row: 1 / 2; }
+    .rl-col-right { grid-column: 2 / 3; grid-row: 1 / 2; }
+    .rl-col-mid { grid-column: 1 / 3; grid-row: 2 / 3; }
+    /* 左栏保持竖排（一行一个角色卡）。
+       这里不能改成横排：名字有 white-space:nowrap，半宽列里三个卡横排
+       会把容器撑宽 25px，虽然有 overflow:hidden 不会出滚动条，但内容被裁掉。 */
+    #room-lobby .rl-char-option canvas {
+        width: auto;
+        height: clamp(26px, 4.2vh, 36px);
+    }
+}
+
+/* 右栏同时带 .rl-col / .rl-settings 两个类，
+   .rl-settings 原有的 max-width:400px / margin 会把网格项挤歪，这里复位 */
+#room-lobby .rl-col-right {
+    max-width: none;
+    margin: 0;
+    width: auto;
+}
+
+/* ---------- 布局收口：内容贴合，不把卡片拉满整栏 ---------- */
+#room-lobby .rl-panel {
+    height: auto;           /* 高度由内容决定，避免 760px 屏上三栏被撑到 600px 全空 */
+    max-height: 100%;
+    align-items: stretch;
+}
+
+#room-lobby .rl-col {
+    justify-content: center;   /* 左右栏内容垂直居中 */
+}
+
+/* 中栏：房间码 / 玩家位 / 按钮 三块居中排布，不再用 space-between 拉开 */
+#room-lobby .rl-col-mid {
+    justify-content: center;
+    gap: clamp(6px, 1.8vh, 20px);
+}
+
+/* 角色卡给固定高度，不再 flex:1 平分整栏 */
+#room-lobby .rl-char-options {
+    flex: 0 0 auto;
+    justify-content: center;
+}
+
+#room-lobby .rl-char-option {
+    flex: 0 0 auto;
+    min-height: clamp(50px, 9vh, 90px);
+}
+
+/* 右栏底部结论不再沉到最底 */
+#room-lobby .rl-settings-desc {
+    margin-top: clamp(6px, 1.6vh, 18px);
+}
+
+/* 玩家位不要被压缩成一条线 */
+#room-lobby .rl-slot {
+    min-height: clamp(26px, 4.6vh, 40px);
 }
