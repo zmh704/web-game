@@ -78,7 +78,8 @@ var captureState = {
   dmgTimer: 0,
   grabCooldown: 0,
   tapDecayTimer: 0,      // 挣脱进度衰减计时
-  escapeBoostTimer: 0    // 挣脱后的加速逃跑窗口
+  escapeBoostTimer: 0,   // 挣脱后的加速逃跑窗口
+  capturedAt: 0          // 被抓时刻（用于"兜底自动挣脱"计时）
 };
 var chaserLeaveTimer = 0;      // 抓捕者离开计时器
 var CHASER_LEAVE_DURATION = 60; // 60秒后自动离开
@@ -331,6 +332,10 @@ function updateMonsterHPBar() {
   var allActive = monsters.concat(bosses);
   if (chaserMonster && chaserMonster.parent && chaserMonster.userData.active) {
     allActive.push(chaserMonster);
+  }
+  // 伪装者：只在现形后显示血条 —— 伪装状态挂着「伪装者」血条等于自报身份
+  if (typeof getImpostorTargets === 'function') {
+    allActive = allActive.concat(getImpostorTargets(true));
   }
   var closest = null, closestDist = 999;
   allActive.forEach(function (m) {

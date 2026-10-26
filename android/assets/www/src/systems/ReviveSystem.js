@@ -304,6 +304,32 @@ function isSquadWiped() {
 /** 主机判定：所有人都倒地了就结束本局 */
 function checkAllDown() {
   if (!GS.isHost || !isCoopRun()) return;
+
+  // 主机自己已经撤离（观战等待队友）时，本地没有"我倒地"可判，
+  // 只要还留在场上的队友全部倒地，就是团灭 —— 直接结算失败。
+  // 不处理的话，最后一个队友会永远躺在地上等一个已经飞走的人来救。
+  if (GS.escaped) {
+    if (GS.gameOver || GS._allDownSent) return;
+    if (typeof PeerManager === 'undefined' || !PeerManager.players) return;
+    var _anyLeft = false, _anyUp = false;
+    for (var _pid in PeerManager.players) {
+      if (_pid === PeerManager.playerId) continue;
+      var _pp = PeerManager.players[_pid];
+      if (!_pp || _pp.escaped) continue;
+      _anyLeft = true;
+      if (!isPlayerDowned(_pid)) _anyUp = true;
+    }
+    if (_anyLeft && !_anyUp) {
+      GS._allDownSent = true;
+      if (PeerManager.connected) PeerManager.broadcast('all_down', {});
+      if (typeof showMessage === 'function') showMessage('💔 队友全部倒下…', 0xff4444);
+      GS.gameOver = true;
+      GS.running = false;
+      if (typeof showGameOver === 'function') showGameOver();
+    }
+    return;
+  }
+
   if (!isSquadWiped()) return;
 
   if (GS._allDownSent) return;

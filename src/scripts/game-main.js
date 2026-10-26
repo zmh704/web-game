@@ -24,8 +24,12 @@ function joinerLocalMonsterAttack(delta) {
     lm.userData.attackCooldown -= delta;
     if (lm.userData.attackCooldown > 0) continue;
     var lDist = player.position.distanceTo(lm.position);
-    var lRange = (!lm.userData.isBoss && lm.userData.type && lm.userData.type.ranged) ? 8 : 3.5;
-    if (lDist < lRange * ((lm.userData.type && lm.userData.type.scale) || 1)) {
+    // 判定半径与主机端统一（见 monsterAttackReach）：不再用 3.5×体型 这种
+    // 远超画面距离的值，否则加入者会"隔空挨打"、队友那边看不到任何挥爪。
+    var lRange = (typeof monsterAttackReach === 'function')
+      ? monsterAttackReach(lm)
+      : 3.5 * ((lm.userData.type && lm.userData.type.scale) || 1);
+    if (lDist < lRange) {
       // 命中后直接复用 monsterAttack() 的完整流程：
       // 攻击特效、受击动画、音效、伤害提示、击退、无敌/护盾判定、死亡判定全在里面。
       // 原来这里只做 `GS.hp -= dmg`，加入者被怪物打时没有任何反馈 ——
@@ -52,7 +56,10 @@ function joinerLocalMonsterAttack(delta) {
       if (lb.userData.attackCooldown === undefined) lb.userData.attackCooldown = 0;
       lb.userData.attackCooldown -= delta;
       if (lb.userData.attackCooldown > 0) continue;
-      if (player.position.distanceTo(lb.position) < 3.5 * ((lb.userData.type && lb.userData.type.scale) || 1)) {
+      var _lbReach = (typeof monsterAttackReach === 'function')
+        ? monsterAttackReach(lb)
+        : 3.5 * ((lb.userData.type && lb.userData.type.scale) || 1);
+      if (player.position.distanceTo(lb.position) < _lbReach) {
         if (typeof monsterAttack === 'function') {
           monsterAttack(lb);
         } else {
@@ -273,8 +280,8 @@ function update(delta) {
   // 倒地待救则可以**爬行**：速度压到 25%，能挪到掩体后或爬向队友，
   // 否则倒在地上只能干等，体验太被动。
   var moveDir = new THREE.Vector3();
-  if (captureState && captureState.captured) {
-    // 移动键无效
+  if ((captureState && captureState.captured) || GS.escaped) {
+    // 被抓住 / 已经撤离（主机观战等待队友）时移动键无效
   } else {
     if (keys['w'] || keys['arrowup']) moveDir.z -= 1;
     if (keys['s'] || keys['arrowdown']) moveDir.z += 1;
@@ -350,6 +357,9 @@ function update(delta) {
   }
   updateItems(delta);
 
+  // 伪装者：主机 / 加入者 / 单机都各跑自己那一只（本地幻觉，见 ImpostorSystem.js）
+  if (typeof updateImpostors === 'function') updateImpostors(delta);
+
   // 更新角色动画
   updatePlayerAnimation(delta, clock.elapsedTime);
   updatePlayerAura(clock.elapsedTime);
@@ -399,7 +409,7 @@ function update(delta) {
           _cui.fill.style.width = '100%';
         }
       }
-    } else if (tickChestHold(energyOrb, delta, true)) {
+    } else if (!GS.escaped && tickChestHold(energyOrb, delta, true)) {
       energyOrb.userData.openProgress = 0;
       if (GS.mode === 'multiplayer' && !GS.isHost) {
         // 加入者：本地读条攒满后上报，由主机触发远程答题。
@@ -427,7 +437,7 @@ function update(delta) {
       nc.userData.openProgress = 0;
       continue;
     }
-    if (tickChestHold(nc, delta, false)) {
+    if (!GS.escaped && tickChestHold(nc, delta, false)) {
       nc.userData.openProgress = 0;
       if (GS.mode === 'multiplayer' && !GS.isHost) {
         // 加入者：本地读条攒满后上报，由主机裁决并触发远程答题。
@@ -453,13 +463,19 @@ function update(delta) {
       ship.userData.ring.material.color.setHex(shipFull ? 0x66ffcc : 0x44ff88);
       ship.userData.ring.material.opacity = shipFull ? 0.5 + Math.sin(clock.elapsedTime * 6) * 0.25 : 0.3;
     }
-    if ((GS.energy || 0) >= (GS.energyMax || 5) && !GS.escaping && player.position.distanceTo(ship.position) < 3) {
-      // 联机模式：逃生是**全队事件**，谁先跑到飞船谁就把大家带走。
-      // 原来这里只允许主机广播，加入者走到飞船只会在自己屏幕上独自起飞，
-      // 主机那边毫无反应 —— 这正是"参与者逃生了、创建者还无法逃生"的另一半原因。
-      // 现在任何一端都可以发起；主机收到后还会再用自己的能量值校验一次（见 game_event）。
+    // 撤离判定：**只认"自己站在飞船边上"**。
+    //
+    // 旧逻辑是谁先摸到飞船就 game_event('escape') 广播出去，其他人收到就直接
+    // 播起飞动画 —— 结果 3 人房里一个人跑到飞船，另外两个不管在地图哪儿都一起通关。
+    // 现在只让当前这个人起飞（startEscape 动的是自己），并广播 player_escaped
+    // 让队友和主机知道"这个人已经走了"，其余人要继续自己走过来。
+    if ((GS.energy || 0) >= (GS.energyMax || 5) && !GS.escaping && !GS.escaped && !GS.gameOver &&
+        player.position.distanceTo(ship.position) < 3) {
       if (GS.mode === 'multiplayer' && typeof PeerManager !== 'undefined' && PeerManager.connected) {
-        PeerManager.broadcast('game_event', { event: 'escape' });
+        PeerManager.broadcast('player_escaped', {
+          playerId: PeerManager.playerId,
+          name: PeerManager.playerName || '队友'
+        });
       }
       startEscape();
     }
@@ -624,6 +640,10 @@ function update(delta) {
       if (chaserMonster && chaserMonster.parent && chaserMonster.userData.active) {
         targetMonsters.push(chaserMonster);
       }
+      // 伪装者同样吃子弹（伪装状态也能打穿）
+      if (typeof getImpostorTargets === 'function') {
+        targetMonsters = targetMonsters.concat(getImpostorTargets(false));
+      }
       var hitRegistered = false;
 
       for (var mIdx = 0; mIdx < targetMonsters.length; mIdx++) {
@@ -641,7 +661,11 @@ function update(delta) {
             ? playerDamageGuard(tm, p.userData.damage)
             : Math.max(1, Math.round(p.userData.damage));
           var _projIsChaser = (typeof chaserMonster !== 'undefined' && tm === chaserMonster);
-          var _projKilled = dealMonsterDamage(tm, dealt, _projIsChaser);
+          // 伪装者：本地结算（它没有 netId，上报会被主机拒收）
+          var _projIsImpostor = !!(tm.userData && tm.userData.isImpostor);
+          var _projKilled = (_projIsImpostor && typeof damageImpostor === 'function')
+            ? damageImpostor(tm, dealt)
+            : dealMonsterDamage(tm, dealt, _projIsChaser);
           tm.userData.hitFlash = 0.2;
           // 命中硬直：短暂停顿+微击退，让子弹有"打中了"的手感
           tm.userData.staggerTimer = Math.max(tm.userData.staggerTimer || 0, tm.userData.isBoss ? 0.1 : 0.2);
@@ -696,11 +720,12 @@ function update(delta) {
               showMessage('⚔️ 追捕者被击败了! 稍后会出现新的', 0x44ff88);
               AudioMgr.playSkill();
               spawnFragmentDrop(tm.position.clone());
-              // 30秒后重新生成
+              // 35~50 秒后在远处重新生成（延迟与刷新点见 BALANCE.spawn / pickEnemySpawnSpot）
               chaserLeaveTimer = 0;
               setTimeout(function () {
+                if (typeof canSpawnEnemiesNow === 'function' && !canSpawnEnemiesNow()) return;
                 if (GS.running && !GS.gameOver) spawnChaser();
-              }, CHASER_RESPAWN_DELAY * 1000);
+              }, (typeof chaserRespawnDelayMs === 'function') ? chaserRespawnDelayMs() : 35000);
             } else {
               onMonsterDefeated(tm);
             }
@@ -797,7 +822,14 @@ function updateMonster(delta) {
       if (m.userData.respawnTimer > 0) {
         m.userData.respawnTimer -= delta;
         if (m.userData.respawnTimer <= 0) {
-          respawnMonster(m);
+          // 闸门：答题 / 开场倒计时 / 已结算 / 已撤离期间先不补刷，
+          // 过一会儿再试 —— 否则玩家答完题一睁眼，脚边就多了一只怪。
+          if (typeof canSpawnEnemiesNow === 'function' && !canSpawnEnemiesNow()) {
+            var _spCfg = (typeof BALANCE !== 'undefined' && BALANCE.spawn) ? BALANCE.spawn : {};
+            m.userData.respawnTimer = _spCfg.retryBlocked || 0.8;
+          } else {
+            respawnMonster(m);
+          }
         }
       }
       continue;
@@ -1089,7 +1121,7 @@ function updateSingleMonsterAI(m, delta) {
         m.rotation.y = Math.atan2(dashMove.x, dashMove.z);
         m.userData.walkPhase += delta * 20;
       }
-      if (dist < 3.5 * (t.scale || 1)) {
+      if (dist < (typeof monsterAttackReach === 'function' ? monsterAttackReach(m) : 3.5 * (t.scale || 1))) {
         m.userData.dashing = 0;
         monsterAttack(m);
       }
@@ -1541,6 +1573,8 @@ function processJoinerInputs(delta) {
   for (var pid in PeerManager.players) {
     if (pid === PeerManager.playerId) continue;
     var p = PeerManager.players[pid];
+    // 已撤离的玩家：不再处理他的输入/拾取，也别把他从场上"重建"回来
+    if (p && p.escaped) continue;
     // 位置由加入者通过 player_input 发送，主机直接信任（客户端预测）
     if (!p.position) {
       p.position = { x: 0, z: -4 };
@@ -1850,8 +1884,7 @@ function init() {
   }
 
   // 加入者端：场景就绪后请求一次完整世界状态（定向发给房主）
-  if (GS.mode === 'multiplayer' && !GS.isHost && PeerManager && PeerManager.connected) {
-    console.log('[Game] init: 加入者模式，请求世界状态');
+  if (GS.mode === 'multiplayer' && !GS.isHost && PeerManager && PeerManager.connected) {    console.log('[Game] init: 加入者模式，请求世界状态');
     setTimeout(function () {
       var _hid = (PeerManager.getHostId && PeerManager.getHostId()) || null;
       if (_hid && _hid !== PeerManager.playerId) {
@@ -1861,4 +1894,7 @@ function init() {
       }
     }, 500);
   }
+
+  // 伪装者：每局重新计时（清掉上一局残留的模型 / 出场倒计时）
+  if (typeof initImpostorSystem === 'function') initImpostorSystem();
 }

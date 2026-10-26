@@ -10,7 +10,7 @@
 //   · 其它静态资源 stale-while-revalidate —— 先用缓存保证快，后台再更新
 //   · 安装后立即 skipWaiting + claim，避免用户长时间停留在旧版本
 // ============================================================
-const CACHE_NAME = 'miracle-forest-v9';
+const CACHE_NAME = 'miracle-forest-v10';
 const ASSETS = [
   'game.html',
   'manifest.json',

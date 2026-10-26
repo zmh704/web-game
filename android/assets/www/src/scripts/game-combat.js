@@ -75,6 +75,7 @@ function nearestAlivePlayerPos(fromPos) {
       var pp = PeerManager.players[pid];
       if (!pp || !pp.position) continue;
       if (pp.downed) continue;
+      if (pp.escaped) continue;   // 已撤离的人不该再被怪物追
       if (typeof pp.hp === 'number' && pp.hp <= 0) continue;
       var dx = fromPos.x - pp.position.x, dz = fromPos.z - pp.position.z;
       var d = Math.sqrt(dx * dx + dz * dz);
@@ -600,6 +601,7 @@ function attack() {
   }
 
   if (GS.downed) return;   // 倒地待救时不能攻击
+  if (GS.escaped) return;  // 已撤离，不再参与战斗
   if (attackCooldown > 0 || !GS.curWeapon || !GS.weapons[GS.curWeapon] || GS.gameOver || !GS.running) return;
   var w = GS.weapons[GS.curWeapon];
 
@@ -661,6 +663,11 @@ function attack() {
   var allActiveMonsters = monsters.concat(bosses);
   if (typeof chaserMonster !== 'undefined' && chaserMonster && chaserMonster.parent && chaserMonster.userData.active) {
     allActiveMonsters.push(chaserMonster);
+  }
+  // 伪装者只在「已现形」时参与辅助瞄准：否则等于给玩家免费雷达，
+  // 一开火就自动指向那位"看起来正常"的队友，伪装机制直接失效
+  if (typeof getImpostorTargets === 'function') {
+    allActiveMonsters = allActiveMonsters.concat(getImpostorTargets(true));
   }
   var closestMon = null, closestDot = -1;
   allActiveMonsters.forEach(function (m) {
@@ -908,11 +915,15 @@ function stickMeleeAttack(w) {
     color: 0xffe08a
   });
 
-  // === 命中判定：前方较大范围（含追捕者）===
+  // === 命中判定：前方较大范围（含追捕者 / 伪装者）===
   var MELEE_RANGE = 5.0;
   var allActive = monsters.concat(bosses);
   if (typeof chaserMonster !== 'undefined' && chaserMonster && chaserMonster.parent && chaserMonster.userData.active) {
     allActive.push(chaserMonster);
+  }
+  // 伪装状态的伪装者也要能打：挥空一棒"验人"是玩家拆穿它的主要手段之一
+  if (typeof getImpostorTargets === 'function') {
+    allActive = allActive.concat(getImpostorTargets(false));
   }
   var target = null, bestDot = 0.15;
   allActive.forEach(function (m) {
@@ -940,7 +951,13 @@ function stickMeleeAttack(w) {
   var dealt = playerDamageGuard(target, dmg);
 
   var _isChaserTarget = (typeof chaserMonster !== 'undefined' && target === chaserMonster);
-  var _meleeKilled = dealMonsterDamage(target, dealt, _isChaserTarget);
+  // 伪装者不进 monsters 数组（原因见 ImpostorSystem.js 顶部），
+  // 所以它也不能走 dealMonsterDamage —— 那条路会给加入者广播一个没有
+  // netId 的 monster_damage，主机会当成无效包丢掉，血条来回跳。
+  var _isImpostorTarget = !!(target.userData && target.userData.isImpostor);
+  var _meleeKilled = (_isImpostorTarget && typeof damageImpostor === 'function')
+    ? damageImpostor(target, dealt)
+    : dealMonsterDamage(target, dealt, _isChaserTarget);
   target.userData.lastAttackedTime = clock.elapsedTime;
   target.userData.hitFlash = 0.25;
   // 木棍命中：小怪明显击退+硬直，近战风险的回报
@@ -990,21 +1007,41 @@ function stickMeleeAttack(w) {
   updateHUD();
 }
 
+// 怪物近战判定半径：基础半径 + 体型小幅加成。
+//
+// 旧实现到处写 `3.5 × 体型`：
+//   小怪（scale 1~1.4）→ 3.5~4.9 米，Boss（scale 2.2）→ 7.7 米，
+//   手还没伸到、血条先掉，是"莫名其妙挨打"的主要来源。
+// 现在小怪约 2.7~2.9 米，Boss 约 3.6 米，和画面上的爪子长度对得上。
+function monsterAttackReach(m) {
+  var cfg = (typeof BALANCE !== 'undefined' && BALANCE.attack) ? BALANCE.attack : {};
+  var t = (m && m.userData && m.userData.type) || {};
+  var base = (m && m.userData && m.userData.isBoss) ? (cfg.bossRange || 2.6) : (cfg.minionRange || 2.2);
+  return base + (cfg.rangePerScale || 0.45) * (t.scale || 1);
+}
+
 function monsterAttack(m) {
   if (GS.gameOver || !GS.running) return;
   if (GS.downed) return;   // 倒地待救时怪物不再追打，避免血量被反复压到 0
+  if (GS.escaped) return;  // 已经撤离（主机观战等待队友），不该继续挨打
   if (!m || !m.userData || !m.userData.active) return;
   if (m.userData.boundTimer > 0) return; // 被捆仙绳束缚，无法攻击
   if (m.userData.staggerTimer > 0) return; // 受击硬直中，无法攻击
   if (m.userData.sleeping) return; // Boss睡眠中不会主动攻击
-  // 每只怪物独立攻击冷却（不再共用全局冷却）
-  if (m.userData.attackCooldown > 0) return;
-  m.userData.attackCooldown = 1.5;
 
   var t = m.userData.type || {};
+  var _atkCfg = (typeof BALANCE !== 'undefined' && BALANCE.attack) ? BALANCE.attack : {};
+
+  // 每只怪物独立攻击冷却（不再共用全局冷却）。
+  // Boss 用更长的间隔：体型大、判定宽，再按小怪的节奏连击就没法躲了。
+  if (m.userData.attackCooldown > 0) return;
+  m.userData.attackCooldown = m.userData.isBoss
+    ? (_atkCfg.bossCooldown || 2.2)
+    : (_atkCfg.minionCooldown || 1.6);
+
   var dir = new THREE.Vector3().subVectors(player.position, m.position);
   var dist = dir.length();
-  if (dist < 3.5 * (t.scale || 1)) {
+  if (dist < monsterAttackReach(m)) {
     // 伤害按"击杀所需次数"计算（Boss最少3次，小怪最少5次，防御已计入）
     var dmg = monsterHitDamage(m);
     if (GS._shielded) {

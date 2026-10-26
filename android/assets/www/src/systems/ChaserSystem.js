@@ -294,6 +294,15 @@ function applyChaserLook(m, state) {
   }
 }
 
+// 抓捕者重新出现的延迟（毫秒）：被击败 / 自行离场后都走这里。
+// 固定 30 秒太机械，改成 35~50 秒的随机区间（取值见 BALANCE.spawn）。
+function chaserRespawnDelayMs() {
+  var cfg = (typeof BALANCE !== 'undefined' && BALANCE.spawn) ? BALANCE.spawn : {};
+  var lo = cfg.chaserRespawnMin || 35;
+  var hi = cfg.chaserRespawnMax || 50;
+  return (lo + Math.random() * Math.max(0, hi - lo)) * 1000;
+}
+
 // 生成抓捕者（追捕者） - 巡逻者，遇到角色快速追击并抓捕
 function spawnChaser() {
   if (chaserMonster && chaserMonster.parent) {
@@ -306,19 +315,45 @@ function spawnChaser() {
   // 下面会整体重赋 g.userData，先把引用取出来再接回去
   var _visual = g.userData.visual;
 
-  // 抓捕者初始位置在远离玩家的非中央房间
-  var candidates = ROOMS.filter(function (r) { return !(r.cx === 0 && r.cz === 0); });
-  var room = candidates[Math.floor(Math.random() * candidates.length)];
-  var x = room.cx + (Math.random() - 0.5) * (roomSize - 12);
-  var z = room.cz + (Math.random() - 0.5) * (roomSize - 12);
-  g.position.set(x, groundY, z);
+  // 出生点：统一选点（不在玩家房间、离所有在场玩家足够远）。
+  // 抓捕者追击速度远高于玩家，贴脸刷基本等于必抓，必须刷得远一点。
+  var minD = (typeof spawnDistFor === 'function') ? spawnDistFor('chaser') : 24;
+  var spot = (typeof pickEnemySpawnSpot === 'function')
+    ? pickEnemySpawnSpot({ minDist: minD })
+    : null;
+  var room = null;
+
+  if (spot) {
+    g.position.copy(spot);
+    if (typeof roomIndexOf === 'function') room = ROOMS[roomIndexOf(spot.x, spot.z)] || null;
+  } else {
+    // 兜底：远离中央房间的随机房间
+    var candidates = ROOMS.filter(function (r) { return !(r.cx === 0 && r.cz === 0); });
+    room = candidates[Math.floor(Math.random() * candidates.length)] || ROOMS[0];
+    g.position.set(
+      room.cx + (Math.random() - 0.5) * (roomSize - 12),
+      groundY,
+      room.cz + (Math.random() - 0.5) * (roomSize - 12)
+    );
+  }
+  if (!room) room = ROOMS[0];
   scene.add(g);
+
+  var _atkCfg = (typeof BALANCE !== 'undefined' && BALANCE.attack) ? BALANCE.attack : {};
 
   g.userData = {
     radius: 0.9,
     active: true,
     walkPhase: 0,
-    type: { name: '追捕者', speed: 3.0, chaseSpeed: 7.0, hp: 500, scale: 1 },
+    type: {
+      name: '追捕者',
+      speed: 3.0,
+      // 追击速度：原来 7.0，玩家基础移速 5.0 根本跑不掉，等于必抓；
+      // 收到 6.4 后「跑 + 绕障碍」能拉开距离，但仍比玩家快，不能一直拖着跑。
+      chaseSpeed: _atkCfg.chaserChaseSpeed || 6.4,
+      hp: 500,
+      scale: 1
+    },
     isChaser: true,
     hp: 500,
     speedMul: 1,
@@ -415,6 +450,23 @@ function updateChaserHoldingJoiner(m, delta, GRAB_RANGE) {
     // 拖着加入者跟随（在抓捕者身后1.5单位）——写入 p.position，快照会把它下发给加入者
     p.position.x = m.position.x - dDir.x * 1.5;
     p.position.z = m.position.z - dDir.z * 1.5;
+  } else if (bossTarget && !m.userData.deliveredToBoss) {
+    // 加入者被拖到 Boss 面前：惩罚由加入者本地结算（血量本来就是各自权威），
+    // 主机这里只负责通知 + 把 Boss 惊醒。
+    m.userData.deliveredToBoss = true;
+    if (typeof PeerManager !== 'undefined' && PeerManager.sendTo && pid) {
+      PeerManager.sendTo(pid, 'game_event', {
+        event: 'captive_delivered',
+        playerId: pid,
+        bossName: (bossTarget.userData && bossTarget.userData.type && bossTarget.userData.type.name) || ''
+      });
+    }
+    showMessage('👑 ' + (p.name || '队友') + ' 被拖到了 Boss 面前!', 0xff4444);
+    if (bossTarget.userData) {
+      bossTarget.userData.sleeping = false;
+      bossTarget.userData.aggroTimer = Math.max(bossTarget.userData.aggroTimer || 0, 6);
+      bossTarget.userData.lastAttackedTime = (typeof clock !== 'undefined' && clock) ? clock.elapsedTime : 0;
+    }
   }
   m.position.y = groundY + Math.abs(Math.sin(m.userData.walkPhase || 0)) * 0.05;
 
@@ -430,7 +482,8 @@ function releaseChaserCaptive(m, p, notify) {
   m.userData.isChasing = false;
   m.userData.staggerTimer = 2.0;
   m.userData.captiveTimer = 0;
-  captureState.grabCooldown = 12;
+  var _relCfg = (typeof BALANCE !== 'undefined' && BALANCE.capture) ? BALANCE.capture : {};
+  captureState.grabCooldown = _relCfg.grabCooldown || 12;
   if (p) { p.isCaptured = false; p._captureAck = false; }
   // 击退抓捕者
   if (p && p.position) {
@@ -439,6 +492,47 @@ function releaseChaserCaptive(m, p, notify) {
   }
   if (notify && pid && pid !== 'host' && typeof PeerManager !== 'undefined' && typeof PeerManager.sendTo === 'function') {
     PeerManager.sendTo(pid, 'game_event', { event: 'player_rescued', playerId: pid });
+  }
+}
+
+// 被拖到 Boss 面前的惩罚。
+//
+// 原来这里只弹一句"你被拖到了Boss面前! 快挣脱!"，没有任何实际后果 ——
+// "被抓"这件事于是没有威胁，挣脱也就不用认真。
+// 现在：按最大生命比例掉血 + 挣脱进度清零 + Boss 被惊醒，让"送达"真的危险。
+// 主机玩家直接调用；加入者由主机发 captive_delivered 事件后在本地调用
+// （伤害归属与其它受击一致，都是自己结算自己的血）。
+function applyCaptiveDeliveredPenalty(bossName) {
+  var cfg = (typeof BALANCE !== 'undefined' && BALANCE.capture) ? BALANCE.capture : {};
+  var maxHp = (GS.maxHp || 100) + (GS.maxHpBonus || 0) + (GS.levelHpBonus || 0);
+  var loss = Math.max(1, Math.ceil(maxHp * (cfg.deliverDmgPct !== undefined ? cfg.deliverDmgPct : 0.15)));
+
+  GS.hp = Math.max(0, (typeof currentPlayerHp === 'function' ? currentPlayerHp() : GS.hp) - loss);
+
+  if (cfg.deliverResetProgress !== false) {
+    captureState.tapCount = 0;
+    updateCaptureUI();
+  }
+
+  hitFlash = 0.4;
+  if (typeof updateHUD === 'function') updateHUD();
+  if (window.VX && VX.vfx && player) {
+    var hp = player.position.clone();
+    hp.y += 0.9;
+    VX.vfx.impact(hp, 0xff0040, { scale: 1.3, chipColor: 0xff2244, chipCount: 10, groundRing: false });
+    VX.vfx.shake(0.12, 0.3);
+  }
+  if (typeof AudioMgr !== 'undefined' && AudioMgr.playHurt) AudioMgr.playHurt();
+  showMessage('👑 被拖到' + (bossName ? ' ' + bossName : ' Boss') + '面前! -' + loss + '❤️ 快挣脱!', 0xff4444);
+  if (navigator.vibrate) { try { navigator.vibrate([120, 60, 120]); } catch (e) { } }
+
+  if (GS.hp <= 0 && typeof handlePlayerDeath === 'function') {
+    captureState.captured = false;
+    var bar = document.getElementById('capture-bar');
+    if (bar) bar.classList.add('hidden');
+    var attackBtn = document.getElementById('btn-attack');
+    if (attackBtn) attackBtn.classList.remove('capture-mode');
+    handlePlayerDeath('capture');
   }
 }
 
@@ -528,9 +622,17 @@ function updateChaser(delta) {
       player.position.z = m.position.z - dDir.z * 1.5;
       player.position.y = groundY;
     } else if (bossTarget && !m.userData.deliveredToBoss) {
-      // 已把玩家拖到Boss面前
+      // 已把玩家拖到Boss面前：真的要吃一次惩罚，而不是只弹一句提示
       m.userData.deliveredToBoss = true;
-      showMessage('👑 你被拖到了Boss面前! 快挣脱!', 0xff4444);
+      if (captureState.captured) {
+        applyCaptiveDeliveredPenalty(bossTarget.userData && bossTarget.userData.type && bossTarget.userData.type.name);
+      }
+      // 顺带把 Boss 惊醒：被拖过来这件事该有后果
+      if (bossTarget.userData) {
+        bossTarget.userData.sleeping = false;
+        bossTarget.userData.aggroTimer = Math.max(bossTarget.userData.aggroTimer || 0, 6);
+        bossTarget.userData.lastAttackedTime = (typeof clock !== 'undefined' && clock) ? clock.elapsedTime : 0;
+      }
     }
 
     // 被抓时：进入"捕获"状态表现
@@ -666,9 +768,14 @@ function capturePlayer() {
   if (captureState.captured) return;
   if (GS.gameOver || !GS.running) return;
 
+  var cfg = (typeof BALANCE !== 'undefined' && BALANCE.capture) ? BALANCE.capture : { tapsToEscape: 10 };
+
   captureState.captured = true;
   captureState.tapCount = 0;
+  captureState.maxTap = cfg.tapsToEscape || 10;
   captureState.dmgTimer = 0;
+  captureState.tapDecayTimer = 0;
+  captureState.capturedAt = (typeof clock !== 'undefined' && clock) ? clock.elapsedTime : 0;
   // 注意：冷却在挣脱/送达时设置，被抓瞬间不设（否则挣脱快时冷却反而先走完）
 
   // 显示挣脱进度条
@@ -694,7 +801,8 @@ function capturePlayer() {
     chaserMonster.userData.deliveredToBoss = false;
     chaserMonster.userData.isChasing = false;
   }
-  showMessage('🕸️ 追捕者正拖着你去Boss房间! 快点击攻击挣脱!', 0xff4444);
+  // 提示要讲清楚"怎么挣扎"和"松手会掉"：新机制下进度是连续衰减的
+  showMessage('🕸️ 被追捕者抓住了! 连续点右下角攻击键挣脱（松手进度会掉）', 0xff4444);
   AudioMgr.playHurt();
 
   // 被抓住的瞬间：一大团暗影爆开 + 明显震屏，让"被抓"有分量
@@ -713,11 +821,13 @@ function capturePlayer() {
 }
 
 function updateCaptureUI() {
-  var pct = Math.min(100, (captureState.tapCount / captureState.maxTap) * 100);
+  var maxTap = captureState.maxTap || 10;
+  // 进度可能是小数（连续衰减），显示用向上取整，进度条宽度用真实比例
+  var pct = Math.min(100, Math.max(0, (captureState.tapCount / maxTap) * 100));
   var fillEl = document.getElementById('capture-bar-fill');
   var countEl = document.getElementById('capture-bar-count');
   if (fillEl) fillEl.style.width = pct + '%';
-  if (countEl) countEl.textContent = captureState.tapCount + '/' + captureState.maxTap;
+  if (countEl) countEl.textContent = Math.min(maxTap, Math.ceil(captureState.tapCount)) + '/' + maxTap;
 }
 
 function onCaptureTap() {
@@ -737,9 +847,10 @@ function onCaptureTap() {
   }
 }
 
-function breakFreeFromCapture() {
+function breakFreeFromCapture(auto) {
   captureState.captured = false;
   captureState.tapCount = 0;
+  captureState.capturedAt = 0;
   // 挣脱后给2.5秒加速逃跑窗口
   captureState.escapeBoostTimer = 2.5;
 
@@ -755,7 +866,7 @@ function breakFreeFromCapture() {
   var vig = document.getElementById('hit-vignette');
   if (vig) vig.classList.remove('captured');
 
-  showMessage('💪 挣脱成功! 抓紧时间快跑!', 0x44ff88);
+  showMessage(auto ? '💪 你终于挣脱了! 快跑!' : '💪 挣脱成功! 抓紧时间快跑!', 0x44ff88);
   AudioMgr.playSkill();
 
   // 挣脱：绿色冲击波，和被抓的暗红爆点形成强对比
@@ -788,8 +899,9 @@ function breakFreeFromCapture() {
     chaserMonster.userData.captiveId = null;
     chaserMonster.userData.staggerTimer = 2.0;
   }
-  // 统一冷却：挣脱后12秒内不会再次被抓
-  captureState.grabCooldown = 12;
+  // 统一冷却：挣脱后一段时间内不会再次被抓（默认 12 秒）
+  var _cfgFree = (typeof BALANCE !== 'undefined' && BALANCE.capture) ? BALANCE.capture : {};
+  captureState.grabCooldown = _cfgFree.grabCooldown || 12;
 }
 
 // 在update中处理抓捕者相关逻辑
@@ -809,12 +921,11 @@ function updateCaptureSystem(delta) {
           window.chaserMonster = null;
         }
         showMessage('👋 追捕者离开了，稍后会重新出现', 0x8888ff);
-        // 30秒后重新生成
+        // 随机 35~50 秒后重新生成（原来固定 30 秒，节奏太机械）
         setTimeout(function () {
-          if (GS.running && !GS.gameOver) {
-            spawnChaser();
-          }
-        }, CHASER_RESPAWN_DELAY * 1000);
+          if (typeof canSpawnEnemiesNow === 'function' && !canSpawnEnemiesNow()) return;
+          if (GS.running && !GS.gameOver) spawnChaser();
+        }, chaserRespawnDelayMs());
         return;
       }
     }
@@ -831,11 +942,22 @@ function updateCaptureSystem(delta) {
         player.position.z = chaserMonster.position.z - _cDir.z * 1.5;
       }
     }
+    var _capCfg = (typeof BALANCE !== 'undefined' && BALANCE.capture) ? BALANCE.capture : {};
+
+    // 掉血：按章节威胁放大（第 1 章约 3/秒，第 5 章约 6/秒，封顶 8），
+    // 让"被抓着不放"有真实的时间压力。原来固定 3/秒，抓着十几秒也没感觉。
     captureState.dmgTimer += delta;
     if (captureState.dmgTimer >= 1.0) {
-      captureState.dmgTimer = 0;
-      if (GS._invulnTimer > 0) { captureState.dmgTimer = 0; }
-      else GS.hp -= 3;
+      captureState.dmgTimer -= 1.0;
+      if (GS._invulnTimer > 0) {
+        captureState.dmgTimer = 0;
+      } else {
+        var _threat = (typeof BALANCE !== 'undefined' && BALANCE.chapterThreat) ? BALANCE.chapterThreat(GS.chapter) : 1;
+        var _loss = Math.min(_capCfg.dmgPerSecCap || 8,
+          Math.round((_capCfg.dmgPerSec || 3) * _threat));
+        GS.hp = Math.max(0, (typeof currentPlayerHp === 'function' ? currentPlayerHp() : GS.hp) - _loss);
+        hitFlash = 0.25;   // 被抓掉血也要有受击红晕，否则玩家根本不知道在掉血
+      }
       if (GS.hp <= 0) {
         // 先解除被抓捕状态再走统一死亡入口：
         // 联机下这里是"倒地待救"，不能直接 showGameOver 结束整局
@@ -850,14 +972,23 @@ function updateCaptureSystem(delta) {
       }
       updateHUD();
     }
-    // 每1.2秒不点击就掉1点挣脱进度（最多掉到0），点得慢就挣不脱
-    captureState.tapDecayTimer += delta;
-    if (captureState.tapDecayTimer >= 1.2) {
-      captureState.tapDecayTimer = 0;
-      if (captureState.tapCount > 0) {
-        captureState.tapCount--;
-        updateCaptureUI();
-      }
+
+    // 挣脱进度按秒**连续**衰减：手一停，进度条就往下走。
+    // 旧实现是"每 1.2 秒没点才 -1，而且点一下就把计时清零"——
+    // 等于只要没彻底停手就永远不掉，点 10 下 1.5 秒就脱身，一点紧张感都没有。
+    var _decay = (_capCfg.decayPerSec !== undefined) ? _capCfg.decayPerSec : 0.8;
+    if (captureState.tapCount > 0) {
+      var _beforeInt = Math.ceil(captureState.tapCount);
+      captureState.tapCount = Math.max(0, captureState.tapCount - _decay * delta);
+      if (Math.ceil(captureState.tapCount) !== _beforeInt) updateCaptureUI();
+    }
+
+    // 兜底：完全不会点 / 按钮被挡住的小朋友，也不该被永远抓着
+    var _cfgAuto = _capCfg.autoFreeSec || 14;
+    var _elapsed = (typeof clock !== 'undefined' && clock) ? (clock.elapsedTime - (captureState.capturedAt || 0)) : 0;
+    if (_elapsed > _cfgAuto) {
+      breakFreeFromCapture(true);
+      return;
     }
   } else {
     captureState.tapDecayTimer = 0;

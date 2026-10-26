@@ -28,6 +28,10 @@ var GS = {
   _allDownSent: false,  // 「全员倒地」只广播一次
   fragments: 0,        // 能量碎片(击杀小怪掉落，2个合成1点能量)
   escaping: false,
+  // 已撤离（联机）：本人已经坐上飞船起飞，正在等待队友 / 已经结算。
+  // 和 escaping 的区别：escaping 是"起飞动画进行中"，escaped 是"我已经走了"。
+  // 主机先撤离时不能把世界停下来（否则队友全冻住），靠这个标记进入观战等待。
+  escaped: false,
   skillEnergy: 100,
   skillMax: 100,
   skillReady: true,
@@ -296,6 +300,7 @@ function selectChapter(id) {
   GS.energyMax = (chData && chData.escapeEnergy) || 5;
   GS.fragments = 0;
   GS.escaping = false;
+  GS.escaped = false;
   GS.gameOver = false;
   GS.running = false;
   GS.skillEnergy = 100;
@@ -359,7 +364,9 @@ function updateHUD() {
   document.getElementById('energy-fill').style.width = (deposited / eMax * 100) + '%';
   var subEl = document.getElementById('energy-sub');
   if (subEl) {
-    if (deposited >= eMax) {
+    if (GS.escaped) {
+      subEl.textContent = '⏳ 已撤离，等待队友…';
+    } else if (deposited >= eMax) {
       subEl.textContent = '回飞船起飞！';
     } else {
       subEl.textContent = '碎片 ' + (GS.fragments || 0) + '/2';

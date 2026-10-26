@@ -44,6 +44,49 @@ function grantRandomWeapon() {
 // 当前正在答题的宝箱（防止重复触发）- 全局变量
 window.currentQuizChest = null;
 
+// ============================================================
+// 答题框「无操作」兜底计时器
+//
+// 答题期间 GS.running = false（整局暂停），玩家要是彻底不管
+// （切后台、睡着、被别的窗口盖住），单机永远回不来，联机还会把队友一起冻住，
+// 所以必须留一个兜底收尾。
+//
+// 但兜底必须是「多久没操作」，不能是「打开后多久」：
+// 原来写死 3 秒，题目还没读完、答案还没点，框就自己关了 ——
+// 玩家看到的就是「答题时还没选答案页面就被关掉」。
+// 现在改成 30 秒无操作才关，而且任何点击 / 触摸 / 按键都会重新计时，
+// 正常作答过程永远不会被收走。
+// ============================================================
+var QUIZ_IDLE_CLOSE_MS = 30000;   // 完全没操作多久后兜底关闭
+var QUIZ_RESULT_CLOSE_MS = 8000;  // 作答后留多久看结果
+
+function clearQuizIdleTimer() {
+  if (window.__quizAutoCloseTimer) {
+    clearTimeout(window.__quizAutoCloseTimer);
+    window.__quizAutoCloseTimer = null;
+  }
+}
+
+function armQuizIdleTimer(onTimeout, ms) {
+  clearQuizIdleTimer();
+  window.__quizAutoCloseTimer = setTimeout(function () {
+    window.__quizAutoCloseTimer = null;
+    try { onTimeout(); } catch (e) { console.error('[Quiz] 兜底关闭出错:', e); }
+  }, ms || QUIZ_IDLE_CLOSE_MS);
+}
+
+// 任何交互都重新计时（监听只装一次）
+(function () {
+  if (window.__quizIdleBound) return;
+  window.__quizIdleBound = true;
+  var rearm = function () {
+    if (typeof window.__quizIdleAction === 'function') window.__quizIdleAction();
+  };
+  ['pointerdown', 'touchstart', 'keydown', 'wheel'].forEach(function (ev) {
+    document.addEventListener(ev, rearm, true);
+  });
+})();
+
 // chestItem 为空 = 金色宝箱(答对+3能量); 传入普通宝盒道具 = 答对开出1-3碎片+1武器
 function showQuiz(chestItem) {
   var overlay = document.getElementById('quiz-overlay');
@@ -99,6 +142,30 @@ function showQuiz(chestItem) {
   optContainer.innerHTML = '';
   document.getElementById('quiz-reward').style.display = 'none';
   document.getElementById('quiz-close').style.display = 'none';
+
+  // 收尾（手点"继续冒险" / 兜底超时都会走这里）
+  // byIdle=true 表示是「超时没作答」自动收的，这种情况不消耗宝箱 ——
+  // 玩家只是没看见屏幕，不该白白吞掉一个宝箱。
+  var closeQuiz = function (opts) {
+    var byIdle = !!(opts && opts.byIdle === true);
+    overlay.style.display = 'none';
+    clearQuizIdleTimer();
+    window.__quizIdleAction = null;
+    if (byIdle && !isGolden && chestItem && chestItem.userData) {
+      chestItem.userData.active = true;       // 放回去，允许重新开
+      chestItem.userData.openProgress = 0;
+    } else if (!isGolden && chestItem && typeof window.destroyChestItem === 'function') {
+      // 普通宝箱在答题结束后立即销毁（同金色宝箱逻辑）
+      window.destroyChestItem(chestItem);
+    }
+    // 重置当前答题宝箱，允许下一次答题
+    window.currentQuizChest = null;
+    GS.running = true;
+  };
+  var closeByIdle = function () {
+    if (overlay.style.display !== 'flex') return;
+    closeQuiz({ byIdle: true });
+  };
 
   q.o.forEach(function (opt, i) {
     var btn = document.createElement('button');
@@ -200,30 +267,21 @@ function showQuiz(chestItem) {
       }
       document.getElementById('quiz-close').style.display = 'inline-block';
       updateHUD();
+      // 作答后改成看结果的时间，而不是继续沿用"打开时"那个计时
+      armQuizIdleTimer(closeByIdle, QUIZ_RESULT_CLOSE_MS);
     };
     optContainer.appendChild(btn);
   });
-  var closeQuiz = function () {
-    overlay.style.display = 'none';
-    // 普通宝箱在答题结束后立即销毁（同金色宝箱逻辑）
-    if (!isGolden && chestItem && typeof window.destroyChestItem === 'function') {
-      window.destroyChestItem(chestItem);
-    }
-    // 重置当前答题宝箱，允许下一次答题
-    window.currentQuizChest = null;
-    GS.running = true;
-  };
-  document.getElementById('quiz-close').onclick = closeQuiz;
+
+  document.getElementById('quiz-close').onclick = function () { closeQuiz(); };
   GS.running = false;
 
-  // 兜底自动收尾：答题会把 GS.running 置 false，只有点按钮才恢复。
-  // 玩家没点（分心、切后台）时整局会永久卡住，这里 3 秒后自动关闭——
-  // 关闭动作和手点完全一致，不会吞掉宝箱奖励。
-  if (window.__quizAutoCloseTimer) clearTimeout(window.__quizAutoCloseTimer);
-  window.__quizAutoCloseTimer = setTimeout(function () {
-    if (overlay.style.display !== 'flex') return;
-    closeQuiz();
-  }, 3000);
+  // 兜底：30 秒完全没操作才自动收尾（有交互就重新计时）
+  window.__quizIdleAction = function () {
+    if (overlay.style.display !== 'flex') { window.__quizIdleAction = null; return; }
+    armQuizIdleTimer(closeByIdle);
+  };
+  armQuizIdleTimer(closeByIdle);
 }
 
 function createWeaponGetEffect() {

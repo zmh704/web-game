@@ -510,6 +510,11 @@ function updateFragments(delta) {
 
 // 怪物死亡处理逻辑
 function onMonsterDefeated(m) {
+  // 伪装者走自己的结算（不进 monsters 数组里的星星/碎片/10秒刷新那一套）
+  if (m && m.userData && m.userData.isImpostor) {
+    if (typeof defeatImpostor === 'function') defeatImpostor(m);
+    return;
+  }
   m.userData.active = false;
   var isBoss = m.userData.isBoss;
 
@@ -524,15 +529,19 @@ function onMonsterDefeated(m) {
     // Boss掉落2个碎片
     spawnFragmentDrop(m.position.clone());
     spawnFragmentDrop(m.position.clone());
-    // Boss 10秒后刷新到能量球所在房间
-    m.userData.respawnTimer = 10;
+    // Boss 不单独计时补刷：它跟着「金色宝箱」一起出现（见 spawnEnergyOrb →
+    // spawnBossInRoom），金箱回收 30 秒后重新刷出时 Boss 才会回来。
+    // 原来这里设了 respawnTimer = 10，但 updateMonster 的 Boss 分支从来没有
+    // 消费过这个计时器 —— 等于一行永远不生效的死代码，容易误导后来改的人。
     m.userData.deathTime = clock.elapsedTime;
   } else {
-    // 小怪：死亡位置掉落能量碎片，10秒后刷新
+    // 小怪：死亡位置掉落能量碎片，延迟 8~12 秒在远处补刷
     showMessage('🎉 怪物被击败! 掉落了能量碎片!', 0x44ff88);
     spawnFragmentDrop(m.position.clone());
-    // 小怪10秒后刷新
-    m.userData.respawnTimer = 10;
+    var _spCfg = (typeof BALANCE !== 'undefined' && BALANCE.spawn) ? BALANCE.spawn : {};
+    var _rMin = _spCfg.minionRespawnMin || 8;
+    var _rMax = _spCfg.minionRespawnMax || 12;
+    m.userData.respawnTimer = _rMin + Math.random() * Math.max(0, _rMax - _rMin);
     m.userData.deathTime = clock.elapsedTime;
   }
   updateHUD();

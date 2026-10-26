@@ -21,7 +21,7 @@
 
   <!-- 版本标记：用来一眼确认浏览器加载的是不是最新代码。
        如果看不到这一行，说明拿到了缓存里的旧页面，需要强制刷新。 -->
-  <div class="build-tag">UI build 10-19x</div>
+  <div class="build-tag">UI build 10-20e</div>
 
   <!-- 加载 -->
   <div id="loading">
@@ -487,6 +487,7 @@
   <script src="src/systems/ItemSystem.js"></script>
   <script src="src/systems/MonsterSystem.js"></script>
   <script src="src/systems/ChaserSystem.js"></script>
+  <script src="src/systems/ImpostorSystem.js"></script>
   <script src="src/systems/FlashlightSystem.js"></script>
   <script src="src/systems/ReviveSystem.js"></script>
   <script src="src/systems/EscapeSystem.js"></script>
@@ -636,7 +637,7 @@
     // PWA: 注册 Service Worker
     // 注意：sw.js 曾是 cache-first 并缓存了 game.html，导致改完前端用户刷新也看不到更新。
     // 现已改为 HTML network-first，并在这里主动检查更新 + 新版本接管后自动刷新一次。
-    console.log('[奇迹森林] UI build 2026-10-19x');
+    console.log('[奇迹森林] UI build 2026-10-20e');
 
     // Android WebView（UA 含 "; wv)"）里跳过 Service Worker：
     // App 壳已经用 Cache-Control: no-store 保证每次取最新，

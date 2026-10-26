@@ -2,6 +2,52 @@
 // 状态同步模块 - 世界状态快照、远程玩家渲染、插值
 // ============================================================
 
+// 场上是否还有"没撤离"的其他玩家。
+//
+// 撤离改成各走各的之后，主机需要靠它决定两件事：
+//   1. 自己先撤离时，是直接结算，还是转观战等队友（见 EscapeSystem）；
+//   2. 队友逐个撤离后，是不是该结算了。
+// 倒地的队友仍然算"在场"——他还能被扶起来，不能当成已离场。
+function hasOtherActivePlayers() {
+  if (typeof PeerManager === 'undefined' || !PeerManager.players) return false;
+  for (var pid in PeerManager.players) {
+    if (pid === PeerManager.playerId) continue;
+    var p = PeerManager.players[pid];
+    if (!p) continue;
+    if (p.escaped) continue;
+    return true;
+  }
+  return false;
+}
+window.hasOtherActivePlayers = hasOtherActivePlayers;
+
+// 某个玩家已经撤离：主机把他从场上摘掉（模型、输入、怪物目标），
+// 其他端只提示一句。撤离是各走各的，不再把全队一起带走。
+function markPlayerEscaped(pid, name) {
+  if (!pid || typeof PeerManager === 'undefined' || pid === PeerManager.playerId) return;
+
+  var rec = PeerManager.players && PeerManager.players[pid];
+  if (rec) rec.escaped = true;
+
+  if (GS.isHost && typeof SyncManager !== 'undefined' && SyncManager.remotePlayers) {
+    var rp = SyncManager.remotePlayers[pid];
+    if (rp && rp.mesh) {
+      try { if (rp.mesh.parent) rp.mesh.parent.remove(rp.mesh); } catch (e) { }
+    }
+    delete SyncManager.remotePlayers[pid];
+  }
+
+  if (typeof showMessage === 'function') {
+    showMessage('🚀 ' + (name || (rec && rec.name) || '队友') + ' 已撤离!', 0x66ffcc);
+  }
+
+  // 主机自己在观战等队友，队友都走完了就结算
+  if (GS.isHost && GS.escaped && !GS.gameOver && !hasOtherActivePlayers()) {
+    if (typeof gameWin === 'function') gameWin();
+  }
+}
+window.markPlayerEscaped = markPlayerEscaped;
+
 var SyncManager = {
   remotePlayers: {},    // { peerId: { mesh, state, lerpTarget, nameLabel, prevState } }
   snapshotInterval: 50, // 快照间隔 (ms) = 20Hz
@@ -65,6 +111,7 @@ var SyncManager = {
           isJumping: p.isJumping || false,
           flying: p.flying || false,
           downed: p.downed || false,
+          escaped: p.escaped || false,
           isCaptured: p.isCaptured || false,
           skillActive: p.skillActive || 0,
           skillCooldown: p.skillCooldown || 0,
@@ -247,6 +294,8 @@ var SyncManager = {
       flying: GS._flying || false,
       downed: GS.downed || false,
       isCaptured: (typeof window.captureState !== 'undefined' && window.captureState) ? window.captureState.captured : false,
+      // 已撤离：加入者据此把主机/队友的模型收起来，不再画一个"还站在飞船边的人"
+      escaped: GS.escaped || false,
       skillActive: GS.skillActive || 0,
       skillCooldown: GS.skillCooldown || 0,
       level: GS.level || 1,
@@ -372,6 +421,20 @@ var SyncManager = {
         return;
       }
       connectedPeerIds[p.id] = true;
+
+      // 已撤离的队友：把他的模型收掉，不再跟随、不再画出来。
+      // 撤离是各走各的，谁走了谁从场上消失，剩下的人继续。
+      if (p.escaped) {
+        var _erp = self.remotePlayers[p.id];
+        if (_erp && _erp.mesh) {
+          try { if (_erp.mesh.parent) _erp.mesh.parent.remove(_erp.mesh); } catch (e) { }
+        }
+        delete self.remotePlayers[p.id];
+        if (PeerManager.players && PeerManager.players[p.id]) {
+          PeerManager.players[p.id].escaped = true;
+        }
+        return;
+      }
 
       // 创建或更新远程玩家
       if (!self.remotePlayers[p.id]) {
@@ -1440,7 +1503,7 @@ var SyncManager = {
       'chest_reject', 'monster_attack_fx',
       'quiz_answer', 'quiz_trigger', 'quiz_result',
       'game_event', 'game_over', 'chat_broadcast', 'energy_shared', 'attack_fx',
-      'player_down', 'player_revived', 'all_down'
+      'player_down', 'player_revived', 'all_down', 'player_escaped'
     ];
     if (typeof PeerManager.off === 'function') {
       _MY_TOPICS.forEach(function (topic) { PeerManager.off(topic); });
@@ -1489,20 +1552,29 @@ var SyncManager = {
             capturePlayer();
           }
           break;
+        case 'captive_delivered':
+          // 主机通知：你已被追捕者拖到 Boss 面前。
+          // 伤害与进度清零由本地结算（血量本来就是各自权威的）。
+          if (data.playerId && data.playerId === PeerManager.playerId) {
+            if (typeof applyCaptiveDeliveredPenalty === 'function') {
+              applyCaptiveDeliveredPenalty(data.bossName);
+            }
+          }
+          break;
         case 'player_rescued':
           if (typeof breakFreeFromCapture === 'function' && data.playerId === PeerManager.playerId) {
             breakFreeFromCapture();
           }
           break;
         case 'escape':
-          // 主机权威：加入者先跑到飞船会发来逃生事件，但主机要用自己的能量值
-          // 再确认一次（能量池是共享的，全队满了双方必然一致）。
-          // 加入者方向直接执行 —— 主机发过来的就是已经确认过的。
-          if (GS.isHost && (GS.energy || 0) < (GS.energyMax || 5)) {
-            break;
+          // 旧版本（≤ 10-19y）把撤离当作"全队事件"广播这个 type。
+          // 新逻辑下不再执行全队起飞，只把发送者记成已撤离 ——
+          // 否则一个老客户端摸到飞船，整个房间都会被它带走。
+          if (data.playerId) {
+            if (typeof markPlayerEscaped === 'function') markPlayerEscaped(data.playerId, data.name);
           }
-          if (typeof startEscape === 'function') {
-            startEscape();
+          if (!GS.isHost) {
+            if (typeof showMessage === 'function') showMessage('ℹ️ 撤离需要每个人自己走到飞船', 0x88ccff);
           }
           break;
         case 'item_pickup':
@@ -1513,8 +1585,16 @@ var SyncManager = {
       }
     });
 
-    PeerManager.on('chat_broadcast', function (data) {
-      if (data) {
+    // 撤离：**每个玩家自己走到飞船**才能走，不再"一个人带走全队"。
+    // 发送方广播"我撤了"，其他人继续各自玩；主机负责把这个人从场上摘掉，
+    // 并在场上没有人剩下时结算。
+    PeerManager.on('player_escaped', function (data, fromPeerId) {
+      var pid = (data && data.playerId) || fromPeerId;
+      if (!pid || pid === PeerManager.playerId) return;
+      if (typeof markPlayerEscaped === 'function') markPlayerEscaped(pid, data && data.name);
+    });
+
+    PeerManager.on('chat_broadcast', function (data) {      if (data) {
         MultiplayerUI.addChatMessage(data.playerName || '未知', data.text || '');
       }
     });
@@ -1741,8 +1821,11 @@ var SyncManager = {
             if (target.parent && typeof window.scene !== 'undefined') window.scene.remove(target);
             window.chaserMonster = null;
             if (typeof spawnFragmentDrop === 'function') spawnFragmentDrop(target.position.clone());
-            if (typeof spawnChaser === 'function' && typeof CHASER_RESPAWN_DELAY !== 'undefined') {
-              setTimeout(function () { if (GS.running && !GS.gameOver) spawnChaser(); }, CHASER_RESPAWN_DELAY * 1000);
+            if (typeof spawnChaser === 'function') {
+              setTimeout(function () {
+                if (typeof canSpawnEnemiesNow === 'function' && !canSpawnEnemiesNow()) return;
+                if (GS.running && !GS.gameOver) spawnChaser();
+              }, (typeof chaserRespawnDelayMs === 'function') ? chaserRespawnDelayMs() : 35000);
             }
           } else if (typeof onMonsterDefeated === 'function') {
             onMonsterDefeated(target);
@@ -1843,12 +1926,24 @@ var SyncManager = {
       PeerManager.on('quiz_result', function (data) {
         if (!data || data.correct === undefined) return;
 
-        // 已经有结果了，撤掉"主机没响应"的兜底计时器
-        if (window.__hostQuizTimer) { clearTimeout(window.__hostQuizTimer); window.__hostQuizTimer = null; }
+        // 已经有结果了：换成"看结果"的计时，不再是开放式等待
+        clearQuizIdleTimer();
+        window.__quizIdleAction = null;
 
         var overlay = document.getElementById('quiz-overlay');
         var rewardEl = document.getElementById('quiz-reward');
         var closeBtn = document.getElementById('quiz-close');
+
+        var closeAfterResult = function (ms) {
+          var _quizToken = (window.__quizResultToken = (window.__quizResultToken || 0) + 1);
+          armQuizIdleTimer(function () {
+            if (_quizToken !== window.__quizResultToken) return;   // 又来了一道新题，别误关
+            var ov = document.getElementById('quiz-overlay');
+            if (!ov || ov.style.display !== 'flex') return;
+            ov.style.display = 'none';
+            if (!GS.gameOver && !GS.escaping) GS.running = true;
+          }, ms);
+        };
 
         // unknown：主机那边已经找不到这道题了（题面缓存对不上 / 主机重开过一局）。
         // 只把界面收掉，不算错也不给奖励 —— 重点是别让整局永久停在答题状态。
@@ -1859,14 +1954,7 @@ var SyncManager = {
             rewardEl.style.display = 'block';
           }
           if (closeBtn) closeBtn.style.display = 'inline-block';
-          var _ut = (window.__quizResultToken = (window.__quizResultToken || 0) + 1);
-          setTimeout(function () {
-            if (_ut !== window.__quizResultToken) return;
-            var ov = document.getElementById('quiz-overlay');
-            if (!ov || ov.style.display !== 'flex') return;
-            ov.style.display = 'none';
-            if (!GS.gameOver && !GS.escaping) GS.running = true;
-          }, 1500);
+          closeAfterResult(2000);
           return;
         }
 
@@ -1889,18 +1977,9 @@ var SyncManager = {
         }
         if (closeBtn) closeBtn.style.display = 'inline-block';
 
-        // 兜底自动关闭：答题界面会把 GS.running 置 false（整局暂停），
-        // 只有点"继续冒险"才恢复。玩家如果没点（切后台、手滑、被新弹窗盖住），
-        // 整局就永久卡住 —— 宝箱开不了、怪物不打人、人物也不动。
-        // 这里 3 秒后自动收尾；期间玩家点按钮仍然可以立即关闭。
-        var _quizToken = (window.__quizResultToken = (window.__quizResultToken || 0) + 1);
-        setTimeout(function () {
-          if (_quizToken !== window.__quizResultToken) return;   // 又来了一道新题，别误关
-          var ov = document.getElementById('quiz-overlay');
-          if (!ov || ov.style.display !== 'flex') return;
-          ov.style.display = 'none';
-          if (!GS.gameOver && !GS.escaping) GS.running = true;
-        }, 3000);
+        // 作答后留够时间看结果（原来 3 秒太短，小朋友还没看清奖了什么都关了）；
+        // 期间点"继续冒险"仍然可以立即关闭。
+        closeAfterResult(QUIZ_RESULT_CLOSE_MS);
       });
 
       // 接收道具刷新通知：主机端道具被拾取后10秒刷新
@@ -2114,6 +2193,8 @@ var SyncManager = {
       });
 
       PeerManager.on('game_over', function (data) {
+        // 已经自己结算过了（比如本人在飞船边先撤离，已经看过结算画面）就别再刷一遍
+        if (GS.gameOver) return;
         if (data) {
           GS.gameOver = true;
           GS.running = false;
@@ -2185,11 +2266,21 @@ function showQuizFromHost(data) {
     optContainer.appendChild(btn);
   });
 
-  document.getElementById('quiz-close').onclick = function () {
-    overlay.style.display = 'none';
-    GS.running = true;
-    if (window.__hostQuizTimer) { clearTimeout(window.__hostQuizTimer); window.__hostQuizTimer = null; }
+  // 收尾（手点 / 兜底超时 / 收到结果后自动关 都走这里）
+  var closeHostQuiz = function () {
+    var ov = document.getElementById('quiz-overlay');
+    if (ov) ov.style.display = 'none';
+    clearQuizIdleTimer();
+    window.__quizIdleAction = null;
+    if (!GS.gameOver && !GS.escaping) GS.running = true;
   };
+  var closeHostQuizByIdle = function () {
+    var ov = document.getElementById('quiz-overlay');
+    if (!ov || ov.style.display !== 'flex') return;
+    closeHostQuiz();
+  };
+
+  document.getElementById('quiz-close').onclick = function () { closeHostQuiz(); };
 
   GS.running = false;
 
@@ -2197,15 +2288,16 @@ function showQuizFromHost(data) {
   // 题面在主机侧缓存里对不上），这道题就会一直挂在屏幕上。
   // 答题期间 GS.running 被置 false，整局随之永久卡死 ——
   // 怪物不动、宝箱不开、人物也走不了，而且看不出是"卡在答题"。
-  // 25 秒没结果就自己收尾，效果和手点"继续冒险"完全一致。
-  if (window.__hostQuizTimer) clearTimeout(window.__hostQuizTimer);
-  window.__hostQuizTimer = setTimeout(function () {
-    window.__hostQuizTimer = null;
+  //
+  // 注意必须是「30 秒没有任何操作」才收，而不是打开后固定几秒：
+  // 玩家读题、思考都会超过 3 秒，时间一到把框关掉就成了
+  // 「还没选答案页面就被关了」。任何点击 / 触摸 / 按键都会重新计时。
+  window.__quizIdleAction = function () {
     var ov = document.getElementById('quiz-overlay');
-    if (!ov || ov.style.display !== 'flex') return;
-    ov.style.display = 'none';
-    if (!GS.gameOver && !GS.escaping) GS.running = true;
-  }, 25000);
+    if (!ov || ov.style.display !== 'flex') { window.__quizIdleAction = null; return; }
+    armQuizIdleTimer(closeHostQuizByIdle);
+  };
+  armQuizIdleTimer(closeHostQuizByIdle);
 }
 
 // ============================================================

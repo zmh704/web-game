@@ -4183,3 +4183,157 @@ button.mp-action-card:active {
 #room-lobby .rl-slot {
     min-height: clamp(26px, 4.6vh, 40px);
 }
+
+/* ============================================================
+   章节选择 / 结算界面：按视口高度自适应，不再出现滚动条
+   ------------------------------------------------------------
+   两处原来是 overflow-y:auto + 固定 px 尺寸：
+     · 章节页 5 张卡在手机上换成 3 行，加上标题就顶出 100% 高度；
+     · 结算页竖排 3 个大按钮 + 32px 标题，横屏或矮屏必然溢出。
+   统一改成「尺寸跟 vh 走 + 容器不出滚动条」，
+   矮屏（横屏手机）额外把按钮改成横排、章节卡去掉介绍文字。
+   ============================================================ */
+
+/* ---------- 章节选择 ---------- */
+#chapter-select {
+    /* 绝不出滚动条；顶部留出 fixed 返回按钮的位置，内容垂直居中 */
+    overflow: hidden;
+    justify-content: center;
+    padding: clamp(44px, 9vh, 58px) 0 clamp(8px, 2vh, 20px);
+}
+
+#chapter-select h1 {
+    font-size: clamp(17px, 3.4vh, 24px);
+    margin-bottom: 2px;
+    line-height: 1.15;
+}
+
+#chapter-select .subtitle {
+    font-size: clamp(11px, 1.9vh, 13px);
+    margin-bottom: clamp(6px, 1.8vh, 16px);
+}
+
+.chapter-grid {
+    /* 网格自适应列数：竖屏 2 列、横屏 3~5 列，天然不会溢出 */
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+    align-content: center;
+    justify-content: center;
+    gap: clamp(6px, 1.5vh, 12px);
+    width: 96%;
+    max-width: min(96vw, 960px);
+    max-height: calc(100% - clamp(46px, 12vh, 86px));
+    padding: 0 6px;
+    overflow: hidden;
+}
+
+.chapter-card {
+    width: auto;
+    min-width: 0;
+    padding: clamp(6px, 1.4vh, 12px) clamp(6px, 1.6vw, 10px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.chapter-card .chapter-icon {
+    width: clamp(26px, 6.4vh, 54px);
+    height: clamp(26px, 6.4vh, 54px);
+    font-size: clamp(14px, 3.4vh, 28px);
+    margin: clamp(2px, 0.8vh, 8px) 0;
+}
+
+.chapter-card .chapter-num {
+    font-size: clamp(9px, 1.5vh, 11px);
+}
+
+.chapter-card .chapter-name {
+    font-size: clamp(12px, 2.2vh, 16px);
+    margin-bottom: clamp(2px, 0.6vh, 5px);
+    line-height: 1.2;
+}
+
+.chapter-card .chapter-desc {
+    font-size: clamp(9px, 1.6vh, 12px);
+    line-height: 1.3;
+}
+
+.chapter-card .chapter-energy {
+    font-size: clamp(9px, 1.5vh, 11px);
+    margin-top: clamp(3px, 1vh, 8px);
+    padding: 2px 8px;
+    /* 横屏时卡片变窄，这行字必须单行 —— 否则会断成"撤离需要 5 能 / 量" */
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+/* 矮屏（横屏手机 / 小屏）：卡再收一档，介绍文字让位给可用性 */
+@media (max-height: 540px) {
+    .chapter-grid {
+        grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+    }
+
+    .chapter-card .chapter-desc {
+        display: none;
+    }
+
+    /* 卡片变窄后给能量胶囊减负，保证还是单行 */
+    .chapter-card .chapter-energy {
+        font-size: clamp(8px, 1.4vh, 10px);
+        padding: 2px 6px;
+        margin-top: 4px;
+    }
+}
+
+/* ---------- 结算界面 ---------- */
+#game-over {
+    overflow: hidden;
+    padding: clamp(8px, 2vh, 12px);
+}
+
+#game-over-box {
+    /* 不滚动：靠下面这组 vh 尺寸保证内容放得下 */
+    overflow: hidden;
+    max-height: 100%;
+    padding: clamp(12px, 3.6vh, 40px) clamp(14px, 4vw, 40px);
+}
+
+#game-over-box h2 {
+    font-size: clamp(19px, 4.2vh, 32px);
+    margin-bottom: clamp(6px, 1.8vh, 20px);
+    line-height: 1.2;
+}
+
+#game-over-box p {
+    font-size: clamp(12px, 2.2vh, 18px);
+    margin: clamp(2px, 0.8vh, 8px) 0;
+    line-height: 1.3;
+}
+
+#game-over-buttons {
+    margin-top: clamp(10px, 2.4vh, 24px);
+    gap: clamp(6px, 1.4vh, 12px);
+}
+
+.go-btn {
+    padding: clamp(7px, 1.6vh, 14px) clamp(12px, 3vw, 28px);
+    min-width: 0;
+    min-height: clamp(36px, 7vh, 48px);
+    font-size: clamp(13px, 2.2vh, 17px);
+}
+
+/* 触屏 + 矮屏：三个按钮横排（竖排要吃掉 3×52px，横屏根本放不下） */
+@media (max-height: 540px) {
+    body.is-touch #game-over-buttons {
+        flex-direction: row;
+        flex-wrap: nowrap;
+    }
+
+    body.is-touch .go-btn {
+        width: auto;
+        flex: 1 1 0;
+        padding: 8px 6px;
+        font-size: clamp(11px, 2vh, 15px);
+    }
+}
