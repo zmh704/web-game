@@ -26,7 +26,10 @@ android/____/android/source/local.properties
 # 本地工具/临时文件
 .claude/
 .workbuddy/
+.workbuddy-ai/
 _mp_test*.js
+_impostor_test*.js
+_shot_*.png
 game.html.bak
 
 # Android 构建产物
