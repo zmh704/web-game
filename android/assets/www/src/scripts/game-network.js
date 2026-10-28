@@ -1445,12 +1445,10 @@ function endMultiplayerRun(reason) {
   var title = document.getElementById('result-title');
   var answers = document.getElementById('final-answers');
   var weapons = document.getElementById('final-weapons');
-  var nextBtn = document.getElementById('next-chapter-btn');
   var go = document.getElementById('game-over');
   if (title) title.textContent = '📴 ' + msg;
   if (answers) answers.textContent = '本局已结束，请返回大厅重新创建房间';
   if (weapons) weapons.textContent = '';
-  if (nextBtn) nextBtn.style.display = 'none';
   if (go) go.style.display = 'flex';
   try { if (typeof isPointerLocked !== 'undefined' && isPointerLocked) document.exitPointerLock(); } catch (e) { }
   if (typeof showMessage === 'function') showMessage('📴 ' + msg, 0xff9a3c);

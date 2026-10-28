@@ -467,6 +467,11 @@ function spawnItemsInRoom(rm) {
       if (Math.abs(x) < 8) x = x < 0 ? -10 : 10;
       if (Math.abs(z) < 8) z = z < 0 ? -10 : 10;
     }
+    // 医院：挪到空地（道具不能悬在墙体里）
+    if (typeof mapSnapOpen === 'function') {
+      var _s = mapSnapOpen(x, z, 0.9);
+      x = _s.x; z = _s.z;
+    }
     var mesh = buildItemMesh(itemType);
     // 悬浮高度：贴近地面才有"可拾取物"的读感，1.0 会飘到胸口高度像贴在空中的图
     mesh.position.set(x, 0.62, z);
@@ -563,6 +568,12 @@ function spawnChest(excludeRoom) {
   var c = corners[Math.floor(Math.random() * corners.length)];
   var x = rm.cx + c[0] + (Math.random() - 0.5) * 1.5;
   var z = rm.cz + c[1] + (Math.random() - 0.5) * 1.5;
+
+  // 医院：墙角在楼里可能是隔墙，挪到空地
+  if (typeof mapSnapOpen === 'function') {
+    var _cs = mapSnapOpen(x, z, 1.0);
+    x = _cs.x; z = _cs.z;
+  }
 
   var mesh = buildItemMesh(ct);
   mesh.position.set(x, 1.0, z);

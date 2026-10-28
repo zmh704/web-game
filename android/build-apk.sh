@@ -13,6 +13,33 @@
 set -e
 cd "$(dirname "$0")"
 
+# ------------------------------------------------------------
+# JAVA_HOME 自愈
+#
+# 系统里的 JAVA_HOME 很可能指向一个已经被升级/删掉的 JDK（比如从 jdk-11
+# 换到 jdk-17 之后旧变量没跟着改）。脚本本身用 javac/java（走 PATH）没问题，
+# 但 apksigner.bat 是批处理，内部靠 JAVA_HOME 找 java，指错就直接失败：
+#   ERROR: JAVA_HOME is set to an invalid directory
+# 于是在这里校验一次，无效就自动挑一个装着的 JDK 顶上。
+# ------------------------------------------------------------
+_JH_RAW="$JAVA_HOME"
+_JH_U=""
+if [ -n "$_JH_RAW" ]; then
+  _JH_U="$(cygpath -u "$_JH_RAW" 2>/dev/null || true)"
+fi
+if [ -z "$_JH_U" ] || { [ ! -x "$_JH_U/bin/java.exe" ] && [ ! -x "$_JH_U/bin/java" ]; }; then
+  for _cand in "/c/Program Files/Eclipse Adoptium"/jdk-* \
+               "/c/Program Files/Java"/jdk-* \
+               "/c/Program Files/Microsoft"/jdk-*; do
+    if [ -x "$_cand/bin/java.exe" ] || [ -x "$_cand/bin/java" ]; then
+      JAVA_HOME="$(cygpath -w "$_cand")"
+      export JAVA_HOME
+      echo "==> JAVA_HOME 无效（原值: ${_JH_RAW:-空}），已自动切换为: $JAVA_HOME"
+      break
+    fi
+  done
+fi
+
 SDK="${ANDROID_HOME:-C:/Users/zmh70/Android/Sdk}"
 # 反斜杠转正斜杠。必须用 bash 参数扩展：
 # 用 sed 时 echo 会把 \ 变成两个反斜杠，结果得到 C://Users//... 这种双斜杠，

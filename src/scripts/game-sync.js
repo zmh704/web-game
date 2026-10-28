@@ -1590,7 +1590,14 @@ var SyncManager = {
           if (mm && mm.userData && mm.userData.netId === data.netId) { hit = mm; break; }
         }
       }
-      if (hit) { fromX = hit.position.x; fromZ = hit.position.z; }
+      if (hit) {
+        fromX = hit.position.x; fromZ = hit.position.z;
+        // 专属模型（主刀医生的大刀劈砍等）也要在加入者端播动作——
+        // 光有爪击光带没有身体动画，看起来像"怪物隔空发波"
+        if (typeof hit.__creatureAttack === 'function') {
+          try { hit.__creatureAttack(); } catch (e) { }
+        }
+      }
     }
 
     var toX = (data.tx === undefined || data.tx === null) ? fromX : data.tx;

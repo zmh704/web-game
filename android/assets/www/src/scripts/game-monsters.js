@@ -13,6 +13,13 @@ function _monsterTint(hex, sDelta, lDelta) {
 }
 
 function buildMonsterMesh(t) {
+  // 有专属模型的怪物（医院的三种）先走各自的建模函数。
+  // 模型里自带 userData.tick(delta, m)，由 AI / 同步插值每帧调用做走路动画。
+  if (t && t.model && typeof buildHospitalCreature === 'function') {
+    var special = buildHospitalCreature(t);
+    if (special) return special;
+  }
+
   var S = VX.shape, M = VX.materials;
   var g = new THREE.Group();
 

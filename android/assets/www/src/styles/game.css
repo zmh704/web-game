@@ -240,6 +240,20 @@ body {
     margin-top: 8px
 }
 
+/* 难度卡上的"撤离需要 N 能量"胶囊：门槛现在由难度决定，必须在选难度时就看得见 */
+.diff-card .energy-need {
+    display: inline-block;
+    margin-top: 9px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #8ff5c8;
+    background: rgba(60, 220, 160, 0.12);
+    border: 1px solid rgba(90, 230, 170, 0.38);
+    border-radius: 999px;
+    white-space: nowrap
+}
+
 /* === 章节选择界面 === */
 #chapter-select {
     position: fixed;
@@ -4336,4 +4350,290 @@ button.mp-action-card:active {
         padding: 8px 6px;
         font-size: clamp(11px, 2vh, 15px);
     }
+}
+
+/* ============================================================
+   HUD：视角切换按钮（第一人称 / 第三人称）
+   ------------------------------------------------------------
+   和「退出」按钮同款玻璃质感、同一档尺寸，放在它左边成一组。
+   处于第一人称时描边转薄荷色，和"镜头已经贴到眼睛"的状态对上。
+   ============================================================ */
+#hud-view-btn {
+    position: static;
+    pointer-events: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 8px 13px;
+    min-height: 38px;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1;
+    color: #fff;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(0, 0, 0, 0.5);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: border-color .18s, background .18s, transform .12s;
+}
+
+#hud-view-btn .icon {
+    font-size: 13px;
+    line-height: 1;
+}
+
+#hud-view-btn .view-label {
+    letter-spacing: .5px;
+}
+
+#hud-view-btn:active {
+    transform: scale(0.96);
+}
+
+#hud-view-btn.is-first {
+    border-color: rgba(102, 255, 204, 0.55);
+    background: rgba(20, 64, 52, 0.55);
+    box-shadow: 0 0 12px rgba(102, 255, 204, 0.22);
+}
+
+/* 窄屏竖屏：只留图标，把横向空间让给血量卡和退出按钮 */
+@media (max-width: 430px) {
+    #hud-view-btn {
+        padding: 6px 10px;
+        min-height: 34px;
+    }
+
+    #hud-view-btn .view-label {
+        display: none;
+    }
+}
+
+/* 横屏矮屏：与 #hud-back-btn 同一档尺寸 */
+@media (max-height: 560px) {
+    #hud-view-btn {
+        padding: 4px 10px;
+        min-height: 28px;
+        min-width: 40px;          /* 只留图标时也保证手指点得中 */
+        font-size: 11px;
+        border-radius: 8px;
+    }
+
+    #hud-view-btn .view-label {
+        display: none;
+    }
+}
+
+@media (max-height: 560px) and (max-width: 700px) {
+    #hud-view-btn {
+        padding: 3px 8px;
+        min-height: 26px;
+    }
+}
+
+/* ============================================================
+   HUD 队友列表：队伍编号徽标（P1 / P2 …）
+   ------------------------------------------------------------
+   和头顶名字标签、小地图上的编号是同一个号（主机统一分配），
+   三处对得上，语音里才能喊"3 号过来"。
+   ============================================================ */
+.mp-player-list-item .team-no {
+    display: inline-block;
+    margin-right: 4px;
+    padding: 0 4px;
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 800;
+    line-height: 1.6;
+    letter-spacing: 0.2px;
+    color: #0b2b22;
+    background: #66ffcc;
+    vertical-align: 1px;
+}
+
+/* ============================================================
+   医院地图：开关门按钮
+   ------------------------------------------------------------
+   只在「废弃医院」章节、且玩家站在门附近时出现（见 updateDoorHud）。
+   样式与 #hud-view-btn 保持一致，避免 HUD 右上角出现两种按钮风格。
+   ============================================================ */
+#hud-door-btn {
+    position: static;
+    pointer-events: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 8px 13px;
+    min-height: 38px;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1;
+    color: #fff;
+    border-radius: 10px;
+    border: 1px solid rgba(120, 240, 180, 0.45);
+    background: rgba(16, 52, 40, 0.62);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    box-shadow: 0 0 12px rgba(90, 230, 170, 0.22);
+    transition: border-color .18s, background .18s, transform .12s;
+    animation: doorBtnPulse 1.8s ease-in-out infinite;
+}
+
+#hud-door-btn.hidden {
+    display: none;
+}
+
+#hud-door-btn .icon {
+    font-size: 13px;
+    line-height: 1;
+}
+
+#hud-door-btn .view-label {
+    letter-spacing: .5px;
+}
+
+#hud-door-btn:active {
+    transform: scale(0.96);
+}
+
+@keyframes doorBtnPulse {
+    0%, 100% { box-shadow: 0 0 10px rgba(90, 230, 170, 0.18); }
+    50% { box-shadow: 0 0 18px rgba(90, 230, 170, 0.42); }
+}
+
+@media (max-width: 430px) {
+    #hud-door-btn {
+        padding: 6px 10px;
+        min-height: 34px;
+    }
+
+    #hud-door-btn .view-label {
+        display: none;
+    }
+}
+
+@media (max-height: 560px) {
+    #hud-door-btn {
+        padding: 4px 10px;
+        min-height: 28px;
+        min-width: 40px;
+        font-size: 11px;
+        border-radius: 8px;
+    }
+}
+
+/* ============================================================
+   地图选择：只有两张地图，卡片不要再被拉成两块巨型面板
+   ------------------------------------------------------------
+   原规则是 repeat(auto-fit, minmax(108px,1fr))，卡片数量少时会平分整屏宽度
+   （桌面端一张卡 460px 宽，内容却只有中间一小块）。这里限制卡片的实际宽度，
+   整体居中：竖屏两列、横屏也两列。
+   ============================================================ */
+#chapter-grid {
+    grid-template-columns: repeat(auto-fit, minmax(170px, 240px));
+    justify-content: center;
+    gap: clamp(10px, 2vh, 18px);
+}
+
+#chapter-grid .chapter-card {
+    padding: clamp(10px, 2vh, 18px) clamp(10px, 2vw, 16px);
+}
+
+/* ============================================================
+   难度选择：三张卡按屏幕宽度自适应
+   ------------------------------------------------------------
+   原来是 display:flex + 固定 200px（触屏 170px）宽，
+   412px 宽的手机上 3×170+2×16 = 542px，第一张和第三张直接被裁在屏幕外。
+   现在改成等分弹性宽度，窄屏整体缩放字号，能量胶囊允许换行。
+   ============================================================ */
+#diff-select .diff-grid {
+    display: flex;
+    justify-content: center;
+    align-items: stretch;
+    width: 100%;
+    max-width: min(96vw, 760px);
+    padding: 0 10px;
+    box-sizing: border-box;
+    gap: clamp(8px, 2vw, 26px);
+}
+
+#diff-select .diff-card {
+    width: auto;
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 220px;
+    padding: clamp(12px, 2.4vh, 24px) clamp(6px, 1.6vw, 18px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+}
+
+#diff-select .diff-card .icon {
+    font-size: clamp(28px, 4.6vh, 44px);
+    margin-bottom: clamp(4px, 1.2vh, 10px);
+}
+
+#diff-select .diff-card .label {
+    font-size: clamp(15px, 2.4vh, 21px);
+}
+
+#diff-select .diff-card .desc {
+    font-size: clamp(10px, 1.7vh, 13px);
+    line-height: 1.35;
+}
+
+#diff-select .diff-card .age {
+    font-size: clamp(9px, 1.5vh, 12px);
+    margin-top: clamp(5px, 1.2vh, 8px);
+}
+
+#diff-select .diff-card .energy-need {
+    margin-top: auto;
+    max-width: 100%;
+    font-size: clamp(9px, 1.5vh, 12px);
+    padding: 2px 7px;
+    /* 窄屏一行放不下就会断成"撤离需要 10 / 能量"两截，很丑；
+       文案已改成"需 N 能量"，这里强制单行 */
+    white-space: nowrap;
+    letter-spacing: -0.2px;
+    line-height: 1.25;
+    text-align: center;
+}
+
+/* ============================================================
+   移动端：开/关门按钮改挂「技能按钮的左上方」
+   ------------------------------------------------------------
+   桌面端仍留在顶部 HUD 行（#hud-right）不动；触屏模式下把它从
+   顶栏摘出来，固定到右下按键群的左上角——技能按钮(right:106,
+   bottom:26)的左上方，右手拇指自然够得到，又不挡跳跃/攻击。
+   z-index 高于 #touch-controls(80)，保证压在视角层上面可点。
+   ============================================================ */
+body.is-touch #hud-door-btn {
+    position: fixed;
+    right: 232px;   /* 比上一版再左移：右侧留白给「滑动转视角」，技能键左上位置不变 */
+    bottom: 104px;
+    top: auto;
+    left: auto;
+    padding: 8px 12px;
+    min-height: 44px;
+    font-size: 12px;
+}
+
+/* 关键修复：#hud 的层叠上下文(z=50)压不过触屏视角层 #touch-controls(z=80)，
+   右半屏的滑动区会吃掉门按钮的点击（表现为"显示了也点不动"）。
+   触屏模式下把 #hud 抬到视角层之上——#hud 本身 pointer-events:none，
+   空白处触摸照常穿透给视角层，只有真实按钮会拦截点击。 */
+body.is-touch #hud {
+    z-index: 85;
+}
+
+body.is-touch #hud-door-btn .view-label {
+    letter-spacing: 0;
 }

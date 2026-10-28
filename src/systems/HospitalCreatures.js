@@ -261,21 +261,22 @@ function hcBuildSurgeon(t) {
 
   // ---------------- 腿：绿色刷手裤 + 胶靴 ----------------
   function buildLeg(side) {
+    // 胖子腿：短粗、站距宽，膝盖被肉挤得看不出棱
     var leg = new THREE.Group();
-    leg.position.set(side * 0.105, 0.96, 0);
-    var thigh = new THREE.Mesh(S.capsule(0.095, 0.3, 10, 4), M.scrub);
-    thigh.position.y = -0.18;
+    leg.position.set(side * 0.15, 0.94, 0);
+    var thigh = new THREE.Mesh(S.capsule(0.13, 0.28, 10, 4), M.scrub);
+    thigh.position.y = -0.17;
     hcShadow(thigh);
     leg.add(thigh);
-    var knee = new THREE.Mesh(new THREE.SphereGeometry(0.085, 10, 8), M.scrub);
-    knee.position.y = -0.37;
+    var knee = new THREE.Mesh(new THREE.SphereGeometry(0.115, 10, 8), M.scrub);
+    knee.position.y = -0.36;
     leg.add(knee);
-    var shin = new THREE.Mesh(S.capsule(0.072, 0.34, 10, 4), M.scrub);
-    shin.position.y = -0.6;
+    var shin = new THREE.Mesh(S.capsule(0.10, 0.3, 10, 4), M.scrub);
+    shin.position.y = -0.58;
     hcShadow(shin);
     leg.add(shin);
-    var boot = new THREE.Mesh(S.roundedBox(0.16, 0.13, 0.3, 0.045, 2), M.boot);
-    boot.position.set(0, -0.86, 0.05);
+    var boot = new THREE.Mesh(S.roundedBox(0.19, 0.13, 0.36, 0.045, 2), M.boot);
+    boot.position.set(0, -0.84, 0.06);
     hcShadow(boot);
     leg.add(boot);
     return leg;
@@ -289,12 +290,23 @@ function hcBuildSurgeon(t) {
   torso.rotation.x = 0.17;
   g.add(torso);
 
-  // 里面的绿色刷手服（前襟敞开时能看见）
-  var scrubBody = new THREE.Mesh(new THREE.CylinderGeometry(0.185, 0.165, 0.56, 14), M.scrub);
+  // 里面的绿色刷手服（前襟敞开时能看见）—— 胖子版整体加宽
+  var scrubBody = new THREE.Mesh(new THREE.CylinderGeometry(0.255, 0.23, 0.6, 14), M.scrub);
   scrubBody.position.y = 0.22;
-  scrubBody.scale.z = 0.86;
+  scrubBody.scale.z = 0.9;
   hcShadow(scrubBody);
   torso.add(scrubBody);
+  // 肚腩：从前襟缺口里挤出来的那团（重体力干饭人的肚子比胸还高）
+  var belly = new THREE.Mesh(S.ellipsoid(0.20, 0.17, 0.16, 16), M.scrub);
+  belly.position.set(0, 0.02, 0.135);
+  belly.scale.set(1.15, 0.95, 1);
+  hcShadow(belly);
+  torso.add(belly);
+  // 肚子上的血手印（拖人时蹭的）
+  var bellyBlood = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.14), bloodPlaneMat(36));
+  bellyBlood.position.set(0.05, 0.06, 0.29);
+  bellyBlood.rotation.z = -0.3;
+  torso.add(bellyBlood);
   // 刷手服上的血
   // 刷手服上的血：做小一点、贴得更近，不然远看就是一个红圆点
   var chestBlood = new THREE.Mesh(new THREE.PlaneGeometry(0.13, 0.19), bloodPlaneMat(33));
@@ -305,24 +317,25 @@ function hcBuildSurgeon(t) {
   // 白大褂：开前襟（缺口 76°），下摆略外扩
   // 大衣顶只到肩线（相对躯干 +0.4 → 世界 1.38），
   // 之前做到 1.60 会把整个脑袋包进去，只剩一顶帽子露在外面
+  // 胖子大衣：整体放宽，前襟缺口也加宽（1.6rad）好让肚腩露出来
   var coatRows = hcProfile([
-    [0.225, -0.36],   // 下摆（膝上）
-    [0.21, -0.16],
-    [0.19, 0.04],
-    [0.178, 0.24],
-    [0.172, 0.4]      // 肩
+    [0.30, -0.36],    // 下摆（膝上）
+    [0.285, -0.16],
+    [0.268, 0.04],
+    [0.252, 0.24],
+    [0.242, 0.4]      // 肩
   ]);
-  var coat = new THREE.Mesh(hcOpenLathe(coatRows, 1.33, false, 24), M.gown);
+  var coat = new THREE.Mesh(hcOpenLathe(coatRows, 1.6, false, 26), M.gown);
   coat.position.y = 0.14;
   coat.scale.z = 0.86;
   hcShadow(coat, true);
   torso.add(coat);
 
   // 腰带
-  var belt = new THREE.Mesh(new THREE.TorusGeometry(0.212, 0.026, 6, 22), M.steelDark);
+  var belt = new THREE.Mesh(new THREE.TorusGeometry(0.285, 0.032, 6, 24), M.steelDark);
   belt.rotation.x = Math.PI / 2;
-  belt.position.y = 0.0;
-  belt.scale.z = 0.88;
+  belt.position.y = -0.02;
+  belt.scale.z = 0.9;
   torso.add(belt);
 
   // 听诊器
@@ -362,70 +375,92 @@ function hcBuildSurgeon(t) {
 
   // ---------------- 手臂（在衣服轮廓之外） ----------------
   function buildArm(side) {
+    // 胖子手臂：粗、圆、略外张（架在肚子两侧）
     var arm = new THREE.Group();
-    arm.position.set(side * 0.212, 1.4, 0.01);
-    var shoulder = new THREE.Mesh(new THREE.SphereGeometry(0.082, 12, 10), M.gown);
+    arm.position.set(side * 0.275, 1.38, 0.01);
+    var shoulder = new THREE.Mesh(new THREE.SphereGeometry(0.108, 12, 10), M.gown);
     shoulder.scale.set(1, 0.92, 0.95);
     hcShadow(shoulder);
     arm.add(shoulder);
-    var upper = new THREE.Mesh(S.capsule(0.062, 0.26, 10, 4), M.gown);
+    var upper = new THREE.Mesh(S.capsule(0.085, 0.24, 10, 4), M.gown);
     upper.position.y = -0.19;
     hcShadow(upper);
     arm.add(upper);
-    var elbow = new THREE.Mesh(new THREE.SphereGeometry(0.058, 10, 8), M.gown);
+    var elbow = new THREE.Mesh(new THREE.SphereGeometry(0.078, 10, 8), M.gown);
     elbow.position.y = -0.36;
     arm.add(elbow);
-    var fore = new THREE.Mesh(S.capsule(0.052, 0.24, 10, 4), M.gown);
+    var fore = new THREE.Mesh(S.capsule(0.07, 0.22, 10, 4), M.gown);
     fore.position.y = -0.52;
     hcShadow(fore);
     arm.add(fore);
-    var cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.058, 0.06, 10), M.glove);
-    cuff.position.y = -0.65;
+    var cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.082, 0.076, 0.06, 10), M.glove);
+    cuff.position.y = -0.64;
     arm.add(cuff);
-    var glove = new THREE.Mesh(S.capsule(0.058, 0.13, 10, 4), M.glove);
-    glove.position.y = -0.72;
+    var glove = new THREE.Mesh(S.capsule(0.075, 0.12, 10, 4), M.glove);
+    glove.position.y = -0.71;
     hcShadow(glove);
     arm.add(glove);
 
     arm.userData.hand = new THREE.Group();
-    arm.userData.hand.position.y = -0.8;
+    arm.userData.hand.position.y = -0.78;
     arm.add(arm.userData.hand);
     return arm;
   }
   var armL = buildArm(-1), armR = buildArm(1);
-  armL.rotation.z = 0.1;
-  armR.rotation.z = -0.08;
+  armL.rotation.z = 0.14;
+  armR.rotation.z = -0.12;
   g.add(armL, armR);
 
-  // 右手骨锯（加大加长，刃口淬着干血——锯过太多人了）
-  var saw = new THREE.Group();
-  var sawHandle = new THREE.Mesh(S.roundedBox(0.045, 0.15, 0.055, 0.02, 2), M.steelDark);
-  sawHandle.position.set(0, -0.03, 0);
-  saw.add(sawHandle);
-  var sawBlade = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.05, 0.62), M.steel);
-  sawBlade.position.set(0, 0.02, 0.33);
-  saw.add(sawBlade);
-  // 刃口的血垢
-  var sawBlood = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.02, 0.58), M.blood);
-  sawBlood.position.set(0, -0.008, 0.31);
-  saw.add(sawBlood);
-  for (var ti = 0; ti < 12; ti++) {
-    var tooth = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.05, 4), ti % 3 === 0 ? M.blood : M.steel);
-    tooth.position.set(0, 0.02, 0.06 + ti * 0.05);
-    tooth.rotation.x = Math.PI / 2;
-    saw.add(tooth);
-  }
-  saw.rotation.x = -1.1;
-  armR.userData.hand.add(saw);
+  // 右手大刀：医院后厨的巨型剁骨刀，木柄缠布，刀身带豁口和陈年血垢
+  var dao = new THREE.Group();
+  // 木柄（手握在下端，刀身朝上）
+  var hilt = new THREE.Mesh(new THREE.CylinderGeometry(0.030, 0.034, 0.62, 8), M.boot);
+  hilt.position.y = 0.31;
+  hcShadow(hilt);
+  dao.add(hilt);
+  // 柄上的缠布（红布条，斩过太多东西）
+  var clothRing = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.042, 0.1, 8),
+    VX.materials.std(0x7a1f1a, { rough: 0.95 }));
+  clothRing.position.y = 0.09;
+  dao.add(clothRing);
+  // 护手盘
+  var guard = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.026, 10), M.steelDark);
+  guard.position.y = 0.63;
+  dao.add(guard);
+  // 刀身：宽厚的剁骨刀（刀背厚、刀刃薄，前面那道是刃）
+  var daoBlade = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.52, 0.26), M.steel);
+  daoBlade.position.set(0, 0.91, 0.075);
+  hcShadow(daoBlade);
+  dao.add(daoBlade);
+  // 刀背（加厚的一条，厚度感）
+  var spine = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.52, 0.05), M.steelDark);
+  spine.position.set(0, 0.91, -0.06);
+  dao.add(spine);
+  // 刃口（发亮 + 血垢）
+  var edge = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.52, 0.02), VX.materials.std(0xd8e6e2, { rough: 0.18, metal: 0.6 }));
+  edge.position.set(0, 0.91, 0.208);
+  dao.add(edge);
+  var edgeBlood = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.4, 0.012), M.blood);
+  edgeBlood.position.set(0, 0.86, 0.216);
+  dao.add(edgeBlood);
+  // 刀身上的豁口（两处崩刃，砍在骨头上崩的）
+  [[0.24, -0.02], [0.08, 0.01]].forEach(function (np) {
+    var nick = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.05, 4), M.steelDark);
+    nick.position.set(0, np[0], np[1] + 0.208);
+    nick.rotation.x = Math.PI;
+    dao.add(nick);
+  });
+  // 刀尖朝下的引导点（劈砍落地时溅渣用）
+  var daoTip = new THREE.Object3D();
+  daoTip.position.set(0, 0.66, 0.21);
+  dao.add(daoTip);
+  // 静止姿态：刀背扛在右肩上（刀口朝外），手术做累了就拄着歇
+  dao.rotation.z = -0.5;
+  dao.rotation.x = 0.35;
+  armR.userData.hand.add(dao);
 
-  // 左手手术刀
-  var scalpel = new THREE.Group();
-  scalpel.add(new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.14), M.steelDark));
-  var blade = new THREE.Mesh(new THREE.BoxGeometry(0.007, 0.04, 0.12), M.steel);
-  blade.position.set(0, 0.01, 0.12);
-  scalpel.add(blade);
-  scalpel.rotation.x = -0.75;
-  armL.userData.hand.add(scalpel);
+  // 左手空着，微微前伸——随时准备把人按住
+  armL.rotation.x = 0.35;
 
   // ---------------- 脖子 + 头 ----------------
   var neck = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.062, 0.11, 10), M.skin);
@@ -551,27 +586,81 @@ function hcBuildSurgeon(t) {
     legL.rotation.z = 0.02 + Math.abs(sw) * 0.03;
     legR.rotation.z = -0.02 - Math.abs(sw2) * 0.03;
 
-    armR.rotation.x = sw2 * 0.3 - 0.14;
-    armL.rotation.x = sw * 0.34 + 0.04;
+    // 静止/走路姿态：右臂把大刀扛在肩上（局部 z 让刀身搭肩），
+    // 走路时刀随步伐轻轻颠；左手前伸保持平衡
+    armR.rotation.x = sw2 * 0.26 - 0.42;
+    armR.rotation.z = -0.12 - Math.abs(sw) * 0.04;
+    armL.rotation.x = sw * 0.3 + 0.3;
 
     torso.position.y = 0.98 + Math.abs(sw) * 0.025;
     torso.rotation.x = 0.17 + Math.sin(st.t * 1.5) * 0.014;
     torso.rotation.z = Math.sin(phase) * 0.022 * st.amp;
+    torso.rotation.y = Math.sin(st.t * 0.8) * 0.05;
 
     head.rotation.y = Math.sin(st.t * 0.65) * 0.3;
     head.rotation.x = Math.sin(st.t * 1.8) * 0.035 - 0.02;
     head.position.y = 1.66 + Math.abs(sw) * 0.015;
 
-    // 攻击动画：骨锯过顶劈砍（先扬 0.3，再狠狠劈下）
+    // ===== 攻击动画：大刀过顶劈砍，幅度拉满 =====
+    // 总时长 0.8s：蓄力 0.28s（刀抡到身后、躯干拧转发力）→
+    // 劈下 0.18s（二次方缓动，越落越快）→ 命中顿挫 → 收势 0.34s
     if (st.atk > 0) {
-      var ap = 1 - st.atk / 0.55;
-      var lift = Math.min(1, ap / 0.3);
-      var chop = Math.max(0, (ap - 0.3) / 0.7);
-      armR.rotation.x = -2.5 * lift + 2.9 * chop * chop;
-      armR.rotation.z = -0.08 - lift * 0.35;
-      armL.rotation.x = -1.1 * lift - 0.2 * chop;
-      torso.rotation.x = 0.17 - lift * 0.18 + chop * 0.3;
-      head.rotation.x = -0.08 - lift * 0.15;
+      var AP = 1 - st.atk / 0.8;          // 0→1 进度
+      if (AP < 0.35) {
+        // 蓄力：刀从肩上抡向身后上方，躯干右拧后仰
+        var wu = AP / 0.35;
+        var wuE = wu * wu * (3 - 2 * wu);  // smoothstep
+        armR.rotation.x = -0.42 - 2.55 * wuE;      // 手臂抡过头顶到身后
+        armR.rotation.z = -0.12 - 0.55 * wuE;
+        dao.rotation.x = 0.35 - 0.85 * wuE;        // 刀身放平，刃口朝后
+        dao.rotation.z = -0.5 - 0.4 * wuE;
+        torso.rotation.y = -0.6 * wuE;             // 拧腰
+        torso.rotation.x = 0.17 - 0.3 * wuE;       // 后仰
+        torso.rotation.z = 0.12 * wuE;
+        head.rotation.x = -0.02 - 0.3 * wuE;       // 仰头盯目标
+        head.rotation.y = -0.45 * wuE;
+        armL.rotation.x = 0.3 + 0.7 * wuE;         // 左手前按
+        st.hitDone = false;
+      } else if (AP < 0.575) {
+        // 劈砍：二次方加速，从身后直劈到身前地面
+        var cp = (AP - 0.35) / 0.225;
+        var cpE = cp * cp;
+        armR.rotation.x = -2.97 + 4.35 * cpE;      // -2.97 → +1.38
+        armR.rotation.z = -0.67 + 0.75 * cp;
+        dao.rotation.x = -0.5 + 1.15 * cp;         // 刃口转向前下
+        dao.rotation.z = -0.9 + 0.55 * cp;
+        torso.rotation.y = -0.6 + 1.05 * cpE;      // 拧腰回正带过冲
+        torso.rotation.x = -0.13 + 0.75 * cpE;     // 整个人压下去
+        torso.rotation.z = 0.12 - 0.3 * cpE;
+        head.rotation.x = -0.32 + 0.62 * cpE;
+        head.rotation.y = -0.45 + 0.75 * cpE;
+        armL.rotation.x = 1.0 - 0.45 * cp;
+        if (!st.hitDone && cp > 0.55) {
+          // 劈中瞬间：刀尖位置溅起骨渣 + 一道弧光
+          st.hitDone = true;
+          try {
+            var _wp = new THREE.Vector3();
+            daoTip.getWorldPosition(_wp);
+            if (window.VX && VX.vfx) {
+              VX.vfx.impact(_wp, 0x8a939a, { scale: 1.5, chipCount: 14, streakCount: 8, shake: true });
+            }
+          } catch (e) { }
+        }
+      } else {
+        // 收势：慢慢回到扛刀姿态
+        var rc = (AP - 0.575) / 0.425;
+        var rcE = rc * rc * (3 - 2 * rc);
+        armR.rotation.x = 1.38 + (-0.42 - 1.38) * rcE;
+        armR.rotation.z = 0.08 + (-0.12 - 0.08) * rcE;
+        dao.rotation.x = 0.65 + (0.35 - 0.65) * rcE;
+        dao.rotation.z = -0.35 + (-0.5 + 0.35) * rcE;
+        torso.rotation.y = 0.45 * (1 - rcE);
+        torso.rotation.x = 0.62 - 0.45 * rcE;
+        torso.rotation.z = -0.18 * (1 - rcE);
+        head.rotation.x = 0.3 * (1 - rcE) - 0.02;
+        head.rotation.y = 0.3 * (1 - rcE);
+        armL.rotation.x = 0.55 - 0.25 * rcE;
+      }
     }
 
     // 狂暴表现：血越少，右眼的绿光越偏红、越亮（血条压力直接写在脸上）
@@ -585,7 +674,8 @@ function hcBuildSurgeon(t) {
   // 攻击动画钩子（monsterAttack 命中时由 game-combat.js 调用）
   g.__creatureAttack = function () {
     var st = g.__st || (g.__st = { amp: 0, lastPhase: -1, t: Math.random() * 6, atk: 0 });
-    st.atk = 0.55;
+    st.atk = 0.8;      // 大刀劈砍全程 0.8s：蓄力→劈下→收势
+    st.hitDone = false;
   };
 
   return g;

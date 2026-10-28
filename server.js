@@ -218,6 +218,8 @@ function removePlayerFromRoom(peerId, roomCode) {
   // 这里直接把这一局判死：通知所有人房主已离开，然后关闭房间。
   // 加入者收到 host_left 会弹结算并退回大厅 —— 比静默卡死好得多。
   if (wasHost && wasInGame) {
+    console.log('[WS] host_left 广播: 房间', roomCode, '剩余玩家', Object.keys(room.players).length,
+      '各自的readyState:', Object.keys(room.players).map(function (k) { return room.players[k].ws.readyState; }).join(','));
     broadcastToRoom(roomCode, {
       type: 'host_left',
       message: '房主已离开，本局结束'

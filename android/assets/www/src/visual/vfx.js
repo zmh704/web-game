@@ -112,6 +112,19 @@ VX.vfx = (function () {
     return unitBox;
   }
 
+  // 碎屑材质缓存：按颜色复用 MeshBasicMaterial（碎屑不再做透明度淡出，
+  // 只做缩放消失，所以材质可以安全共享 —— 连续战斗时每秒少创建几十个材质对象）
+  var chipMatCache = {};
+  function chipMat(color, highlight) {
+    var key = (highlight ? 'h' : 'c') + color;
+    if (!chipMatCache[key]) {
+      chipMatCache[key] = new THREE.MeshBasicMaterial({
+        color: highlight ? 0xfff0c0 : color, toneMapped: false
+      });
+    }
+    return chipMatCache[key];
+  }
+
   function push(obj) {
     if (!window.scene) return null;
     window.scene.add(obj);
@@ -272,7 +285,7 @@ VX.vfx = (function () {
         var sz = (0.045 + Math.random() * 0.05) * S;
         var chip = new THREE.Mesh(
           box(),
-          new THREE.MeshBasicMaterial({ color: c2 % 3 === 0 ? 0xfff0c0 : chipColor, toneMapped: false })
+          chipMat(chipColor, c2 % 3 === 0)
         );
         chip.scale.set(sz, sz * 0.85, sz * 0.7);
         chip.position.copy(pos);
@@ -282,13 +295,15 @@ VX.vfx = (function () {
           vel: new THREE.Vector3(Math.cos(a2) * sp, (1.8 + Math.random() * 2.4) * Math.sqrt(S), Math.sin(a2) * sp),
           gravity: 9.0,
           life: 0.55 + Math.random() * 0.25,
-          fade: true,
+          // 材质按颜色缓存共享，不能写 fade（fade 会改共享材质的 opacity）——
+          // 改成在 update 里做缩放消失，视觉效果等价
           spin: new THREE.Vector3((Math.random() - 0.5) * 15, (Math.random() - 0.5) * 15, (Math.random() - 0.5) * 15),
           update: function (o, dt) {
             var s3 = o.userData.spin;
             o.rotation.x += s3.x * dt;
             o.rotation.y += s3.y * dt;
             o.rotation.z += s3.z * dt;
+            o.scale.multiplyScalar(Math.max(0, 1 - dt * 1.6));
             var gy = groundY() + 0.04;
             if (o.position.y < gy) {
               o.position.y = gy;

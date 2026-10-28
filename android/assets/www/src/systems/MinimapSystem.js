@@ -29,33 +29,39 @@ function updateMinimap() {
   var ox = w / 2, oz = h / 2;
   var H = halfRoom;
 
-  ROOMS.forEach(function (rm) {
-    var rx = ox + rm.cx * scale, rz = oz + rm.cz * scale;
-    ctx.strokeStyle = 'rgba(200,180,160,0.35)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(rx - H * scale, rz - H * scale, roomSize * scale, roomSize * scale);
-    if (rm.cx === 0 && rm.cz === 0) {
-      ctx.fillStyle = 'rgba(255,215,0,0.08)';
-      ctx.fillRect(rx - H * scale, rz - H * scale, roomSize * scale, roomSize * scale);
-    }
-    ctx.fillStyle = 'rgba(200,200,200,0.2)';
-    ctx.font = '8px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(rm.name, rx, rz + 2);
-  });
+  // 医院：画真实的平面图（房间矩形 / 楼梯 / 每扇门的开关状态），
+  // 而不是 3×3 网格 —— 网格图画不出走廊和房间，玩家根本认不了路。
+  if (typeof HMAP !== 'undefined' && HMAP && HMAP.active && typeof drawHospitalMinimap === 'function') {
+    drawHospitalMinimap(ctx, ox, oz, scale, H);
+  } else {
+    ROOMS.forEach(function (rm) {
+      var rx = ox + rm.cx * scale, rz = oz + rm.cz * scale;
+      ctx.strokeStyle = 'rgba(200,180,160,0.35)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(rx - H * scale, rz - H * scale, roomSize * scale, roomSize * scale);
+      if (rm.cx === 0 && rm.cz === 0) {
+        ctx.fillStyle = 'rgba(255,215,0,0.08)';
+        ctx.fillRect(rx - H * scale, rz - H * scale, roomSize * scale, roomSize * scale);
+      }
+      ctx.fillStyle = 'rgba(200,200,200,0.2)';
+      ctx.font = '8px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(rm.name, rx, rz + 2);
+    });
 
-  // 画门（绿色小方块表示门洞）
-  var G = DOOR_HALF;
-  ctx.fillStyle = 'rgba(100,200,100,0.35)';
-  DOOR_POSITIONS.forEach(function (dp) {
-    var dx = dp[0], dz = dp[1];
-    var isVertical = (dx === -H || dx === H);
-    if (isVertical) {
-      ctx.fillRect(ox + dx * scale - 2, oz + dz * scale - G * scale, 4, G * 2 * scale);
-    } else {
-      ctx.fillRect(ox + dx * scale - G * scale, oz + dz * scale - 2, G * 2 * scale, 4);
-    }
-  });
+    // 画门（绿色小方块表示门洞）
+    var G = DOOR_HALF;
+    ctx.fillStyle = 'rgba(100,200,100,0.35)';
+    DOOR_POSITIONS.forEach(function (dp) {
+      var dx = dp[0], dz = dp[1];
+      var isVertical = (dx === -H || dx === H);
+      if (isVertical) {
+        ctx.fillRect(ox + dx * scale - 2, oz + dz * scale - G * scale, 4, G * 2 * scale);
+      } else {
+        ctx.fillRect(ox + dx * scale - G * scale, oz + dz * scale - 2, G * 2 * scale, 4);
+      }
+    });
+  }
 
   if (ship) {
     var sx = ox + ship.position.x * scale, sz = oz + ship.position.z * scale;
@@ -159,7 +165,20 @@ function updateMinimap() {
   ctx.lineTo(cx + Math.sin(player.rotation.y) * 9, cz + Math.cos(player.rotation.y) * 9);
   ctx.stroke();
 
-  // 联机模式：显示远程玩家位置
+  // 自己也标上队伍编号（P1/P2…），和队友的号规则一致，方便嘴上喊"我3号"。
+  // 画在**点的下方**：队友的编号+名字在点上方，两个人贴在一起时才不会糊成一团。
+  var myNo = GS.myTeamNo || 0;
+  if (GS.mode === 'multiplayer' && myNo) {
+    ctx.fillStyle = '#a8ffcc';
+    ctx.font = 'bold 7px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('P' + myNo, cx, cz + 11);
+  }
+
+  // 联机模式：显示远程玩家位置（编号 + 名字）
+  //
+  // 小地图只有一百来像素，光写名字既糊又分不清谁是谁；加上队伍编号后，
+  // 头顶标签、HUD 队友列表、小地图三处就是同一个号，喊话能对上人。
   if (GS.mode === 'multiplayer' && typeof SyncManager !== 'undefined') {
     for (var rpid in SyncManager.remotePlayers) {
       var rp = SyncManager.remotePlayers[rpid];
@@ -167,10 +186,29 @@ function updateMinimap() {
         var rx = ox + rp.state.x * scale, rz = oz + rp.state.z * scale;
         ctx.fillStyle = '#66ccff';
         ctx.beginPath(); ctx.arc(rx, rz, 3, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = 'rgba(102,204,255,0.5)';
+
+        var tno = rp.teamNo || 0;
+        var nm = rp.playerName || '玩家';
+        if (nm.length > 4) nm = nm.slice(0, 4) + '…';   // 小地图放不下长昵称
+        var noText = tno ? ('P' + tno) : '';
+
+        // 先分别量宽度（字号不同），再整体居中
+        ctx.font = 'bold 7px sans-serif';
+        var noW = noText ? ctx.measureText(noText).width : 0;
         ctx.font = '6px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(rp.playerName || '玩家', rx, rz - 5);
+        var nameW = ctx.measureText(nm).width;
+        var gap = noText ? 2 : 0;
+        var startX = rx - (noW + gap + nameW) / 2;
+
+        ctx.textAlign = 'left';
+        if (noText) {
+          ctx.fillStyle = '#9fe8ff';
+          ctx.font = 'bold 7px sans-serif';
+          ctx.fillText(noText, startX, rz - 6);
+        }
+        ctx.fillStyle = 'rgba(180,225,255,0.75)';
+        ctx.font = '6px sans-serif';
+        ctx.fillText(nm, startX + noW + gap, rz - 6);
       }
     }
   }

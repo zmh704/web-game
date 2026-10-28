@@ -355,8 +355,8 @@ function hmInitLayout() {
   var vids = vz.map(function (z) { return node('v' + z, 0, z); });
   for (var i = 0; i < vids.length - 1; i++) link(vids[i], vids[i + 1]);
 
-  // 横向走廊
-  var hx = [-44, -34, -24, -14, -6, 6, 14, 24, 34, 44];
+  // 横向走廊（-27/27 是新门 d_*_s / d_*_n 的走廊侧锚点）
+  var hx = [-44, -34, -27, -24, -14, -6, 6, 14, 24, 27, 34, 44];
   var hids = hx.map(function (x) { return node('h' + x, x, 0); });
   for (var j = 0; j < hids.length - 1; j++) link(hids[j], hids[j + 1]);
   link('v0', 'h-6');
@@ -371,7 +371,18 @@ function hmInitLayout() {
     { id: 'd_pharm', x: -HMAP.CW, z: 14, room: 'v16', to: 'r_pharm', roomNode: [-27, 14] },
     { id: 'd_wardB', x: -HMAP.CW, z: 36, room: 'v36', to: 'r_wardB', roomNode: [-27, 36] },
     { id: 'd_er', x: HMAP.CW, z: 14, room: 'v16', to: 'r_er', roomNode: [16, 14] },
-    { id: 'd_stair', x: HMAP.CW, z: 36, room: 'v36', to: 'r_stair', roomNode: [16, 36] }
+    { id: 'd_stair', x: HMAP.CW, z: 36, room: 'v36', to: 'r_stair', roomNode: [16, 36] },
+    // ---------- 横向走廊两侧的门（h=true：门板沿 x 展开，装在横墙 z=±CW 上） ----------
+    // 没有这 4 扇时，横走廊东西两臂是死胡同（两端撞外墙、中途没有任何门）
+    { id: 'd_wardA_s', h: true, x: -27, z: -HMAP.CW, label: '病房 A', room: 'h-27', to: 'r_wardA_s', roomNode: [-27, -14] },
+    { id: 'd_icu_s',   h: true, x: 27,  z: -HMAP.CW, label: '重症室', room: 'h27',  to: 'r_icu_s',   roomNode: [27, -14] },
+    { id: 'd_pharm_n', h: true, x: -27, z: HMAP.CW,  label: '药房',   room: 'h-27', to: 'r_pharm_n', roomNode: [-27, 14] },
+    { id: 'd_er_n',    h: true, x: 27,  z: HMAP.CW,  label: '急诊室', room: 'h27',  to: 'r_er_n',    roomNode: [27, 14] },
+    // ---------- 相邻房间直通门（装在象限内隔墙 z=-23 / z=24 上） ----------
+    { id: 'd_or_ward',   h: true, x: -27, z: -23, label: '手术室', room: 'r_or',    to: 'r_wardA', roomNode: [-27, -14] },
+    { id: 'd_morgue_icu', h: true, x: 27,  z: -23, label: '太平间', room: 'r_morgue', to: 'r_icu',   roomNode: [27, -14] },
+    { id: 'd_pharm_ward', h: true, x: -27, z: 24,  label: '药房',   room: 'r_pharm',  to: 'r_wardB', roomNode: [-27, 36] },
+    { id: 'd_er_stair',   h: true, x: 27,  z: 24,  label: '急诊室', room: 'r_er',    to: 'r_stair', roomNode: [16, 36] }
   ];
   doorDefs.forEach(function (d) {
     node(d.id, d.x, d.z);
@@ -609,17 +620,18 @@ function buildHospitalWalls() {
   wallRun('z', CW, -RB, -CW, doorGapsW.slice(0, 2), 0, WH, IT);
   wallRun('z', CW, CW, RB, doorGapsW.slice(2, 4), 0, WH, IT);
 
-  // 横向走廊两侧（z = ±CW），只到走廊边缘
-  wallRun('x', -CW, -RB, -CW, [], 0, WH, IT);
-  wallRun('x', -CW, CW, RB, [], 0, WH, IT);
-  wallRun('x', CW, -RB, -CW, [], 0, WH, IT);
-  wallRun('x', CW, CW, RB, [], 0, WH, IT);
+  // 横向走廊两侧（z = ±CW），北墙开病房A/重症室的门，南墙开药房/急诊的门
+  // （原来 4 段全封闭 → 横走廊东西两臂是死胡同）
+  wallRun('x', -CW, -RB, -CW, [{ at: -27, w: 2.0 }], 0, WH, IT);
+  wallRun('x', -CW, CW, RB, [{ at: 27, w: 2.0 }], 0, WH, IT);
+  wallRun('x', CW, -RB, -CW, [{ at: -27, w: 2.0 }], 0, WH, IT);
+  wallRun('x', CW, CW, RB, [{ at: 27, w: 2.0 }], 0, WH, IT);
 
-  // 房间之间的隔墙
-  wallRun('x', -23, -RB, -CW, [], 0, WH, IT);
-  wallRun('x', -23, CW, RB, [], 0, WH, IT);
-  wallRun('x', 24, -RB, -CW, [], 0, WH, IT);
-  wallRun('x', 24, CW, RB, [], 0, WH, IT);
+  // 房间之间的隔墙（中段各开一扇直通门：手术室↔病房A 等）
+  wallRun('x', -23, -RB, -CW, [{ at: -27, w: 2.0 }], 0, WH, IT);
+  wallRun('x', -23, CW, RB, [{ at: 27, w: 2.0 }], 0, WH, IT);
+  wallRun('x', 24, -RB, -CW, [{ at: -27, w: 2.0 }], 0, WH, IT);
+  wallRun('x', 24, CW, RB, [{ at: 27, w: 2.0 }], 0, WH, IT);
 }
 
 // ---------- 门 ----------
@@ -630,31 +642,48 @@ function buildHospitalDoors() {
   HMAP.doorDefs.forEach(function (def, idx) {
     var w = 2.0;
     var h = 2.15;
-    var isX = false;                 // 这些门都开在竖墙（x = ±CW）上，门板沿 z 展开
-    var hingeX = def.x;
-    var hingeZ = def.z - w / 2;
+    // h=true：门装在横墙（z=±CW / 隔墙 z=-23、24）上，门板沿 x 展开；
+    // 否则装在竖墙（x=±CW）上，门板沿 z 展开（原有 8 扇）。
+    var isX = !!def.h;
     var baseRot = 0;
-    // 开门方向：朝房间里开（左侧房间往 -x，右侧往 +x）
-    var openSign = (def.x < 0) ? 1 : -1;
-
     var grp = new THREE.Group();
-    grp.position.set(hingeX, 0, hingeZ);
+    var openSign;
+    if (isX) {
+      // 铰链在门的西端；z<0 的墙朝 -z（北）开，z>0 的墙朝 +z（南）开
+      grp.position.set(def.x - w / 2, 0, def.z);
+      openSign = (def.z < 0) ? 1 : -1;
+    } else {
+      // 铰链在门的南端；x<0 的墙朝 -x（西）开，x>0 的墙朝 +x（东）开
+      grp.position.set(def.x, 0, def.z - w / 2);
+      openSign = (def.x < 0) ? 1 : -1;
+    }
 
     var leafMat = new THREE.MeshStandardMaterial({
       map: doorTex, roughness: 0.62, metalness: 0.28
     });
-    var leaf = new THREE.Mesh(new THREE.BoxGeometry(0.085, h, w), leafMat);
-    leaf.position.set(0, h / 2, w / 2);
+    var leaf;
+    if (isX) {
+      leaf = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.085), leafMat);
+      leaf.position.set(w / 2, h / 2, 0);
+    } else {
+      leaf = new THREE.Mesh(new THREE.BoxGeometry(0.085, h, w), leafMat);
+      leaf.position.set(0, h / 2, w / 2);
+    }
     leaf.castShadow = true;
     leaf.receiveShadow = true;
     grp.add(leaf);
 
     // 门把手（两侧）
     var knobMat = M.steel;
-    [0.05, -0.05].forEach(function (dx) {
+    [0.05, -0.05].forEach(function (off) {
       var knob = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.14, 8), knobMat);
-      knob.rotation.z = Math.PI / 2;
-      knob.position.set(dx, 1.02, w - 0.24);
+      if (isX) {
+        knob.rotation.x = Math.PI / 2;
+        knob.position.set(w - 0.24, 1.02, off);
+      } else {
+        knob.rotation.z = Math.PI / 2;
+        knob.position.set(off, 1.02, w - 0.24);
+      }
       grp.add(knob);
     });
 
@@ -663,12 +692,23 @@ function buildHospitalDoors() {
     // 门框（两根立柱 + 上梁），固定不动的
     var jambMat = M.steelDark;
     [-1, 1].forEach(function (s) {
-      var jamb = new THREE.Mesh(new THREE.BoxGeometry(0.16, h + 0.16, 0.14), jambMat);
-      jamb.position.set(def.x, (h + 0.16) / 2, def.z + s * (w / 2 + 0.07));
+      var jamb;
+      if (isX) {
+        jamb = new THREE.Mesh(new THREE.BoxGeometry(0.14, h + 0.16, 0.16), jambMat);
+        jamb.position.set(def.x + s * (w / 2 + 0.07), (h + 0.16) / 2, def.z);
+      } else {
+        jamb = new THREE.Mesh(new THREE.BoxGeometry(0.16, h + 0.16, 0.14), jambMat);
+        jamb.position.set(def.x, (h + 0.16) / 2, def.z + s * (w / 2 + 0.07));
+      }
       jamb.castShadow = true;
       scene.add(jamb);
     });
-    var head = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.16, w + 0.3), jambMat);
+    var head;
+    if (isX) {
+      head = new THREE.Mesh(new THREE.BoxGeometry(w + 0.3, 0.16, 0.18), jambMat);
+    } else {
+      head = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.16, w + 0.3), jambMat);
+    }
     head.position.set(def.x, h + 0.08, def.z);
     scene.add(head);
 
@@ -676,16 +716,28 @@ function buildHospitalDoors() {
     // 不补这一段的话，从走廊能直接看到门上方 1 米多的洞（像墙体破了个口子）。
     var lintelH = HMAP.WH - (h + 0.16);
     if (lintelH > 0.02) {
-      var lintel = new THREE.Mesh(new THREE.BoxGeometry(HMAP.IT, lintelH, w + 0.02),
-        HMAP.wallMatFor(w, lintelH));
+      var lintel;
+      if (isX) {
+        lintel = new THREE.Mesh(new THREE.BoxGeometry(w + 0.02, lintelH, HMAP.IT),
+          HMAP.wallMatFor(w, lintelH));
+      } else {
+        lintel = new THREE.Mesh(new THREE.BoxGeometry(HMAP.IT, lintelH, w + 0.02),
+          HMAP.wallMatFor(w, lintelH));
+      }
       lintel.position.set(def.x, h + 0.16 + lintelH / 2, def.z);
       lintel.castShadow = true;
       lintel.receiveShadow = true;
       scene.add(lintel);
     }
 
-    // 门牌：房间名（自发光小牌，黑暗里也能看清）
-    var sign = hmMakeSign(def.id.replace('d_', ''), def.x, h + 0.42, def.z, Math.PI / 2 * (def.x > 0 ? -1 : 1));
+    // 门牌：房间名（自发光小牌，黑暗里也能看清）。
+    // 新门用 def.label 显式指定文字；朝向：横墙门牌贴在走廊那一面。
+    var signRy = isX ? (def.z < 0 ? 0 : Math.PI) : Math.PI / 2 * (def.x > 0 ? -1 : 1);
+    var sign = hmMakeSign(def.label || def.id.replace('d_', ''), def.x, h + 0.42, def.z, signRy);
+    if (isX) {
+      // hmMakeSign 里的偏移是给竖墙用的（沿 x 推出 0.22），横墙门改成沿 z 推出
+      sign.position.set(def.x, h + 0.42, def.z + (def.z < 0 ? 0.22 : -0.22));
+    }
 
     var door = {
       id: def.id,
@@ -693,9 +745,10 @@ function buildHospitalDoors() {
       z: def.z,
       w: w,
       h: h,
+      horiz: isX,          // 朝向标记：关门的碰撞盒 / 小地图都要转 90°
       group: grp,
       open: false,
-      angle: 0,          // 0 = 关，1 = 全开
+      angle: 0,            // 0 = 关，1 = 全开
       target: 0,
       baseRot: baseRot,
       openSign: openSign,
@@ -2012,7 +2065,8 @@ function buildHospitalProps() {
 
     } else if (r.type === 'morgue') {
       morgueWall(cx, r.z0 + 0.9, 0, 6, 3);
-      morgueWall(cx, r.z1 - 0.9, Math.PI, 6, 3);
+      // 南抽屉墙左移 6m：正下方新开了太平间↔重症室直通门（gap x 26~28），原位正好糊住门洞
+      morgueWall(cx - 6, r.z1 - 0.9, Math.PI, 6, 3);
       gurney(cx - 3, cz - 2, 0.2, true);
       gurney(cx + 2.6, cz + 1.4, -0.3, false);
       // 地漏附近的血
@@ -2238,11 +2292,11 @@ function buildHospitalProps() {
   deadPlant(4.2, 41.5);
   stretcherWall(4.6, 23.4, -Math.PI / 2);
   // 走廊：护士站（靠东墙）+ 补给柜
-  desk(3.9, 13, -Math.PI / 2, 2.2);
+  desk(3.9, 24, -Math.PI / 2, 2.2);   // 不能放门口：原来 z=13 正堵急诊门(门在 z=14)
   cabinet(-4.35, 2, Math.PI / 2);
-  gurney(3.3, -36, Math.PI + 0.05, false);
-  stretcherWall(-4.5, -14, Math.PI / 2);
-  bioBin(4.4, 16.5);
+  gurney(3.3, -30, Math.PI + 0.05, false);   // 原来正对太平间门口
+  stretcherWall(-4.5, -8, Math.PI / 2);      // 原来正对病房A门口
+  bioBin(4.4, 19);
   // 横向走廊
   noticeBoard(20, -4.68, 0);
   fireBox(-26, 4.6, Math.PI);
@@ -2589,11 +2643,13 @@ function hospitalResolveCollision(pos, radius, y) {
       if (_hmBoxHit(pos, r, wl)) { moved = true; hit = true; }
     }
 
-    // 关着的门
+    // 关着的门（竖墙门板沿 z 展开 → 碰撞盒 x 窄 z 宽；横墙门相反）
     for (var d = 0; d < HMAP.doors.length; d++) {
       var dr = HMAP.doors[d];
       if (dr.angle > 0.42) continue;          // 开了一条缝就不再挡
-      var box = { x: dr.x, z: dr.z, w: 0.55, d: dr.w + 0.1 };
+      var box = dr.horiz
+        ? { x: dr.x, z: dr.z, w: dr.w + 0.1, d: 0.55 }
+        : { x: dr.x, z: dr.z, w: 0.55, d: dr.w + 0.1 };
       if (_hmBoxHit(pos, r, box)) { moved = true; hit = true; }
     }
 
@@ -3060,7 +3116,8 @@ function drawHospitalMinimap(ctx, ox, oz, scale, H) {
     var dr = HMAP.doors[d];
     ctx.fillStyle = dr.open ? 'rgba(110,240,150,0.9)' : 'rgba(240,110,90,0.9)';
     var px = ox + dr.x * scale, pz = oz + dr.z * scale;
-    ctx.fillRect(px - 2, pz - dr.w * scale / 2, 4, dr.w * scale);
+    if (dr.horiz) ctx.fillRect(px - dr.w * scale / 2, pz - 2, dr.w * scale, 4);
+    else ctx.fillRect(px - 2, pz - dr.w * scale / 2, 4, dr.w * scale);
   }
 
   // 当前层提示

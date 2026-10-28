@@ -21,7 +21,7 @@
 
   <!-- 版本标记：用来一眼确认浏览器加载的是不是最新代码。
        如果看不到这一行，说明拿到了缓存里的旧页面，需要强制刷新。 -->
-  <div class="build-tag">UI build 10-20e</div>
+  <div class="build-tag">UI build 10-29b</div>
 
   <!-- 加载 -->
   <div id="loading">
@@ -64,34 +64,38 @@
   <div id="diff-select" class="hidden">
     <button class="back-btn" onclick="backToCharSelect()">← 返回</button>
     <h1>🎯 选择难度</h1>
-    <div class="subtitle">你想挑战哪片森林呢？</div>
+    <div class="subtitle">难度决定怪物强度，以及撤离要收集多少能量</div>
     <div class="diff-grid">
       <div class="diff-card" onclick="selectDifficulty('easy')">
         <span class="icon">🌱</span>
         <div class="label">初级</div>
         <div class="desc">学前班~一年级<br>简单有趣</div>
         <div class="age">适合 5-6 岁</div>
+        <div class="energy-need">🔋 需 10 能量</div>
       </div>
       <div class="diff-card" onclick="selectDifficulty('medium')">
         <span class="icon">🌿</span>
         <div class="label">中级</div>
         <div class="desc">二年级~三年级<br>更多挑战</div>
         <div class="age">适合 7-8 岁</div>
+        <div class="energy-need">🔋 需 20 能量</div>
       </div>
       <div class="diff-card" onclick="selectDifficulty('hard')">
         <span class="icon">🌳</span>
         <div class="label">高级</div>
         <div class="desc">四年级~五年级<br>最强考验</div>
         <div class="age">适合 9-10 岁</div>
+        <div class="energy-need">🔋 需 30 能量</div>
       </div>
     </div>
   </div>
 
-  <!-- 章节选择 -->
+  <!-- 地图选择（原来叫"章节选择"：章节 → 关卡的概念已经取消了，
+       难度决定能量门槛，地图只决定长什么样、有什么怪） -->
   <div id="chapter-select" class="hidden">
     <button class="back-btn" onclick="backToDiffSelect()">← 返回</button>
-    <h1>🗺️ 选择章节</h1>
-    <div class="subtitle">踏上奇妙冒险记的冒险之旅</div>
+    <h1>🗺️ 选择地图</h1>
+    <div class="subtitle" id="map-select-tip">选一张地图开始</div>
     <div class="chapter-grid" id="chapter-grid"></div>
   </div>
 
@@ -157,7 +161,7 @@
     </div>
   </div>
 
-  <!-- 房间等待界面：左=选择角色 / 中=房间码+玩家+开始 / 右=难度+章节，一屏放下 -->
+  <!-- 房间等待界面：左=选择角色 / 中=房间码+玩家+开始 / 右=难度+地图，一屏放下 -->
   <div id="room-lobby" class="hidden">
     <button class="back-btn" onclick="leaveRoom()">← 离开</button>
 
@@ -214,7 +218,7 @@
         </div>
       </section>
 
-      <!-- 右栏：难度 + 章节（仅房主可改） -->
+      <!-- 右栏：难度 + 地图（仅房主可改） -->
       <section class="rl-col rl-col-right" id="rl-settings">
         <div class="rl-col-title">难度</div>
         <div class="rl-setting-options rl-opt-diff">
@@ -223,16 +227,13 @@
           <div class="rl-setting-opt" data-diff="hard" onclick="selectMPDifficulty('hard')">🌳 高级</div>
         </div>
 
-        <div class="rl-col-title rl-col-title-gap">章节</div>
+        <div class="rl-col-title rl-col-title-gap">地图</div>
         <div class="rl-setting-options rl-opt-ch" id="rl-chapter-options">
-          <div class="rl-setting-opt rl-setting-opt-ch" data-ch="1" onclick="selectMPChapter(1)">第1章</div>
-          <div class="rl-setting-opt rl-setting-opt-ch" data-ch="2" onclick="selectMPChapter(2)">第2章</div>
-          <div class="rl-setting-opt rl-setting-opt-ch" data-ch="3" onclick="selectMPChapter(3)">第3章</div>
-          <div class="rl-setting-opt rl-setting-opt-ch" data-ch="4" onclick="selectMPChapter(4)">第4章</div>
-          <div class="rl-setting-opt rl-setting-opt-ch" data-ch="5" onclick="selectMPChapter(5)">第5章</div>
+          <div class="rl-setting-opt rl-setting-opt-ch" data-ch="3" onclick="selectMPChapter(3)">🏜️ 金色沙漠</div>
+          <div class="rl-setting-opt rl-setting-opt-ch" data-ch="6" onclick="selectMPChapter(6)">🏥 废弃医院</div>
         </div>
 
-        <div class="rl-settings-desc" id="rl-settings-desc">🌿 中级 · 第3章</div>
+        <div class="rl-settings-desc" id="rl-settings-desc">🌿 中级 · 🏜️ 金色沙漠 · 🔋20</div>
       </section>
 
     </div>
@@ -275,6 +276,14 @@
     </div>
     <div id="hud-right">
       <div id="connection-status" class="hidden" title="连接状态">📡</div>
+      <!-- 视角切换：第一人称 / 第三人称。图标随当前视角变化（见 updateViewButton） -->
+      <button id="hud-view-btn" onclick="toggleCameraMode()" title="切换视角（第一/第三人称）">
+        <span class="icon">🎥</span><span class="view-label">视角</span>
+      </button>
+      <!-- 开关门：只在医院地图、且靠近门时出现（见 updateDoorHud） -->
+      <button id="hud-door-btn" class="hidden" onclick="toggleNearbyDoor()" title="开门 / 关门（快捷键 E）">
+        <span class="icon">🚪</span><span class="view-label">开门</span>
+      </button>
       <button class="back-btn" onclick="backToMainMenu()" id="hud-back-btn" title="退出游戏">← 退出</button>
     </div>
   </div>
@@ -391,7 +400,6 @@
       <p id="final-answers"></p>
       <p id="final-weapons"></p>
       <div id="game-over-buttons">
-        <button id="next-chapter-btn" class="go-btn go-btn-next" onclick="nextChapter()">➡️ 下一章节</button>
         <button id="restart-btn" class="go-btn go-btn-restart" onclick="restartGame()">🔄 重新选择</button>
         <button id="back-to-menu-btn" class="go-btn go-btn-menu" onclick="backToMainMenu()">🏠 返回主页</button>
       </div>
@@ -483,6 +491,8 @@
   <!-- NightSystem 必须排在 RoomSystem 之前：buildRoom 要用它的雾距/夜空配置 -->
   <script src="src/systems/CollisionSystem.js"></script>
   <script src="src/systems/NightSystem.js"></script>
+  <script src="src/systems/HospitalMap.js"></script>
+  <script src="src/systems/HospitalCreatures.js"></script>
   <script src="src/systems/RoomSystem.js"></script>
   <script src="src/systems/ItemSystem.js"></script>
   <script src="src/systems/MonsterSystem.js"></script>
@@ -550,7 +560,7 @@
       }, 60);
     }
 
-    // 联机模式难度/章节选择
+    // 联机模式难度/地图选择
     // 房主改动难度/章节后广播给全房，加入者据此更新显示（只读）。
     // 不广播的话，加入者看到的永远是页面里写死的默认值 —— 房主改成第 5 章，
     // 加入者那边还显示"第3章"，锁定状态下等于给了错误信息。
@@ -588,37 +598,31 @@
     function updateMPSettingsDesc() {
       var diffNames = { easy: '🌱 初级', medium: '🌿 中级', hard: '🌳 高级' };
       var el = document.getElementById('rl-settings-desc');
-      if (el) el.textContent = (diffNames[selectedDiff] || '🌱 初级') + ' · 第' + (selectedChapter || 1) + '章';
+      var mapName = '🏜️ 金色沙漠';
+      if (typeof mapDataById === 'function') {
+        var md = mapDataById(selectedChapter || 3);
+        if (md) mapName = (md.icon || '') + ' ' + md.name;
+      }
+      // 联机也按难度决定能量门槛，一起显示出来免得两边对不上
+      var need = (typeof energyForDifficulty === 'function') ? energyForDifficulty(selectedDiff) : 20;
+      if (el) el.textContent = (diffNames[selectedDiff] || '🌱 初级') + ' · ' + mapName + ' · 🔋' + need;
     }
-
-    // 设置联机模式默认章节
 
     // 隐藏加载界面，显示角色选择
     document.getElementById('loading').style.display = 'none';
 
-    // ============================================================
-    // "下一章节"衔接：读取上一局保存的衔接信息，直接进入下一章
-    // ============================================================
-    (function () {
-      var pending = null;
+    // 联机设置面板的初始高亮：默认「中级 + 金色沙漠」。
+    // 原来这两个选项没有任何 selected，进大厅看起来像"什么都没选"。
+    (function initMPSettingsHighlight() {
       try {
-        var raw = localStorage.getItem('miracleForest_pending');
-        if (raw) pending = JSON.parse(raw);
-        localStorage.removeItem('miracleForest_pending'); // 一次性消费，避免死循环
-      } catch (e) { pending = null; }
-
-      if (!pending || !pending.chapter) return;
-      // 校验章节合法且已解锁
-      ProgressMgr.load();
-      var ch = CHAPTERS.find(function (c) { return c.id === pending.chapter; });
-      if (!ch || !ch.unlocked) return;
-
-      // 恢复角色和难度选择，跳过选择界面直接开始
-      selectedChar = pending.character || 'qike';
-      selectedDiff = pending.difficulty || 'easy';
-      GS.difficulty = selectedDiff;
-      document.getElementById('char-select').classList.add('hidden');
-      selectChapter(pending.chapter);
+        document.querySelectorAll('#rl-settings .rl-setting-opt[data-diff]').forEach(function (o) {
+          o.classList.toggle('selected', o.getAttribute('data-diff') === selectedDiff);
+        });
+        document.querySelectorAll('#rl-settings .rl-setting-opt-ch').forEach(function (o) {
+          o.classList.toggle('selected', o.getAttribute('data-ch') === String(selectedChapter));
+        });
+        updateMPSettingsDesc();
+      } catch (e) { }
     })();
 
     // 诊断：正常情况同一时刻只应有一个可见的返回按钮。
@@ -637,7 +641,7 @@
     // PWA: 注册 Service Worker
     // 注意：sw.js 曾是 cache-first 并缓存了 game.html，导致改完前端用户刷新也看不到更新。
     // 现已改为 HTML network-first，并在这里主动检查更新 + 新版本接管后自动刷新一次。
-    console.log('[奇迹森林] UI build 2026-10-20e');
+    console.log('[奇迹森林] UI build 2026-10-29b');
 
     // Android WebView（UA 含 "; wv)"）里跳过 Service Worker：
     // App 壳已经用 Cache-Control: no-store 保证每次取最新，

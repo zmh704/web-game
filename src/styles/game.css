@@ -4606,3 +4606,34 @@ button.mp-action-card:active {
     line-height: 1.25;
     text-align: center;
 }
+
+/* ============================================================
+   移动端：开/关门按钮改挂「技能按钮的左上方」
+   ------------------------------------------------------------
+   桌面端仍留在顶部 HUD 行（#hud-right）不动；触屏模式下把它从
+   顶栏摘出来，固定到右下按键群的左上角——技能按钮(right:106,
+   bottom:26)的左上方，右手拇指自然够得到，又不挡跳跃/攻击。
+   z-index 高于 #touch-controls(80)，保证压在视角层上面可点。
+   ============================================================ */
+body.is-touch #hud-door-btn {
+    position: fixed;
+    right: 232px;   /* 比上一版再左移：右侧留白给「滑动转视角」，技能键左上位置不变 */
+    bottom: 104px;
+    top: auto;
+    left: auto;
+    padding: 8px 12px;
+    min-height: 44px;
+    font-size: 12px;
+}
+
+/* 关键修复：#hud 的层叠上下文(z=50)压不过触屏视角层 #touch-controls(z=80)，
+   右半屏的滑动区会吃掉门按钮的点击（表现为"显示了也点不动"）。
+   触屏模式下把 #hud 抬到视角层之上——#hud 本身 pointer-events:none，
+   空白处触摸照常穿透给视角层，只有真实按钮会拦截点击。 */
+body.is-touch #hud {
+    z-index: 85;
+}
+
+body.is-touch #hud-door-btn .view-label {
+    letter-spacing: 0;
+}

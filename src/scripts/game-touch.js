@@ -43,16 +43,27 @@ function setupTouchControls() {
     var lookId = null, lastX = 0, lastY = 0;
     // 限制视角区不拦截右上角退出按钮的点击区域（右上方约80px区域）
     var hudRightRect = null;
+    var hudDoorRect = null;
     function getHudRightRect() {
         var el = document.getElementById('hud-right');
         if (el) {
             var r = el.getBoundingClientRect();
             hudRightRect = { right: r.right, top: r.top, bottom: r.bottom, left: r.left };
         }
+        // 开/关门按钮在右中下（不在 hud-right 顶栏矩形内），
+        // 按住它的时候不能启动视角滑动
+        var db = document.getElementById('hud-door-btn');
+        if (db && !db.classList.contains('hidden')) {
+            var d2 = db.getBoundingClientRect();
+            hudDoorRect = { right: d2.right, top: d2.top, bottom: d2.bottom, left: d2.left };
+        } else {
+            hudDoorRect = null;
+        }
     }
     function isInHudRight(x, y) {
-        if (!hudRightRect) return false;
-        return x >= hudRightRect.left && x <= hudRightRect.right && y >= hudRightRect.top && y <= hudRightRect.bottom;
+        if (hudRightRect && x >= hudRightRect.left && x <= hudRightRect.right && y >= hudRightRect.top && y <= hudRightRect.bottom) return true;
+        if (hudDoorRect && x >= hudDoorRect.left && x <= hudDoorRect.right && y >= hudDoorRect.top && y <= hudDoorRect.bottom) return true;
+        return false;
     }
     lookZone.addEventListener('touchstart', function (e) {
         e.preventDefault();

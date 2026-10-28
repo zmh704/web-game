@@ -66,6 +66,8 @@ var IMPOSTOR = {
 var impostors = [];
 var _impostorSpawnTimer = IMPOSTOR.firstDelay;
 var _impostorHintShown = false;
+// 联机同步用的实体 id（主机分配，加入者按 id 找本地模型）
+var _impostorSeq = 0;
 
 // ============================================================
 // 生命周期
@@ -118,6 +120,12 @@ function pickImpostorDisguise() {
       pool.push({
         character: p.character || 'qike',
         name: p.name || '队友',
+        // 冒充谁就要带上谁的队伍编号 —— 真队友标签是「P2 小明」，
+        // 伪装者只有「小明」的话，扫一眼就对上了，破绽太大。
+        teamNo: (typeof SyncManager !== 'undefined' && SyncManager.teamNoOf)
+          ? SyncManager.teamNoOf(pid) : (p.teamNo || 0),
+        // 等级也要抄过去：真队友标签是「P2 小明 Lv.3」，少一段也是破绽
+        level: p.level || 1,
         peerId: pid
       });
     }
@@ -128,6 +136,8 @@ function pickImpostorDisguise() {
     pool.push({
       character: cid,
       name: (typeof characterName === 'function') ? characterName(cid) : '队友',
+      level: 1,
+      teamNo: 0,          // 单机没有队伍编号
       peerId: null
     });
   }
@@ -191,6 +201,23 @@ function drawImpostorLabel(canvas, ctx, texture, text, hpPct, revealed) {
   if (texture) texture.needsUpdate = true;
 }
 
+// 画伪装者头顶标签。
+//
+// 伪装期间**直接复用队友那套 SyncManager._drawNameLabel**（同字号、同编号薄荷色、
+// 同血条位置）—— 任何像素级差异都会让"这是假队友"变成一眼能看出来的破绽。
+// 现形之后才换成红底 + "伪装者"。
+function paintImpostorLabel(canvas, ctx, texture, disguise, hpPct, revealed) {
+  var d = disguise || {};
+  if (!revealed && typeof SyncManager !== 'undefined' && SyncManager._drawNameLabel) {
+    SyncManager._drawNameLabel(canvas, ctx, texture, d.name || '队友',
+      hpPct, d.level || 1, d.teamNo || 0);
+    return;
+  }
+  drawImpostorLabel(canvas, ctx, texture,
+    revealed ? '伪装者' : (d.name || '队友'),
+    hpPct, revealed);
+}
+
 function createImpostorModel(disguise) {
   var root = (typeof createPlayer === 'function')
     ? createPlayer(true, disguise.character)
@@ -212,7 +239,7 @@ function createImpostorModel(disguise) {
   sprite.scale.set(1.5, 0.375, 1);
   sprite.position.y = 1.6;
   root.add(sprite);
-  drawImpostorLabel(canvas, ctx, texture, disguise.name, 1, false);
+  paintImpostorLabel(canvas, ctx, texture, disguise, 1, false);
 
   // 脚下光环：颜色跟着被冒充的角色走（和真队友同一个颜色）
   var auraColor = (typeof CHARACTER_AURA !== 'undefined' && CHARACTER_AURA[disguise.character])
@@ -250,6 +277,15 @@ function spawnImpostor() {
   if (typeof player === 'undefined' || !player) return null;
   if (!GS.running || GS.gameOver || GS.escaped || GS.downed) return null;
 
+  // 联机里伪装者只能由主机生成。
+  //
+  // 原来每个客户端各跑一只「本地幻觉」，结果就是你屏幕上有个"队友"走过来，
+  // 别人那边根本没有这个人 —— 你被一个别人看不见的东西追着打，
+  // 也没法喊队友帮忙；伪装机制彻底失去意义（它骗的本来就应该是全队）。
+  // 现在主机是唯一权威：出场时机、位置、伪装对象、现形状态都在主机，
+  // 加入者按快照重建本地模型（见 createRemoteImpostor / _syncImpostors）。
+  if (GS.mode === 'multiplayer' && !GS.isHost) return null;
+
   // 场上最多一只：多了就不是"多出来一个人"，而是怪物围城
   for (var k = 0; k < impostors.length; k++) {
     if (impostors[k] && impostors[k].userData && impostors[k].userData.active) return null;
@@ -278,6 +314,8 @@ function spawnImpostor() {
     isImpostor: true,
     active: true,
     isBoss: false,
+    // 联机同步 id：加入者按它找本地那份模型，主机按它接收伤害上报
+    netId: 'imp_' + (++_impostorSeq),
     type: { hp: maxHp, dmg: IMPOSTOR.dmg, name: '伪装者', scale: 1 },
     hp: maxHp,
     maxHp: maxHp,
@@ -317,10 +355,29 @@ function spawnImpostor() {
 }
 
 // ============================================================
-// 每帧更新（主机 / 加入者 / 单机都会跑，是本地的"个人幻觉"）
+// 每帧更新
+//
+// 单机 / 主机：跑完整的出场调度 + AI（唯一权威）
+// 加入者：不生成、不跑 AI，只维护主机快照同步下来的那一只：
+//   插值移动 → 步态动画 → 本地偷袭结算（自己的血自己扣）→ 看破检测
 // ============================================================
 function updateImpostors(delta) {
   if (typeof player === 'undefined' || !player) return;
+
+  var isJoiner = (GS.mode === 'multiplayer' && !GS.isHost);
+
+  if (isJoiner) {
+    // 加入者：本地这一只完全由快照驱动，这里不做出场调度
+    for (var j = impostors.length - 1; j >= 0; j--) {
+      var rj = impostors[j];
+      if (!rj || !rj.parent || !rj.userData || !rj.userData.active) {
+        impostors.splice(j, 1);
+        continue;
+      }
+      updateRemoteImpostor(rj, delta);
+    }
+    return;
+  }
 
   // 出场调度只在真正能跑的时候倒计时：答题 / 结算 / 撤离 / 开场倒计时期间不偷跑
   var _canSpawn = (typeof canSpawnEnemiesNow === 'function')
@@ -347,12 +404,179 @@ function updateImpostors(delta) {
   }
 }
 
+// ============================================================
+// 加入者：更新主机同步过来的那一只
+//
+// 位置完全由快照插值得到（不在本地挪怪，否则会出现"我这儿有只怪、
+// 主机那边它还在别处"的分裂 —— 影子 AI 那次已经踩过一次了）。
+// ============================================================
+function updateRemoteImpostor(m, delta) {
+  var ud = m.userData;
+  var tm = (typeof clock !== 'undefined' && clock) ? clock.elapsedTime : 0;
+
+  if (ud.attackCooldown > 0) ud.attackCooldown -= delta;
+  if (ud.attackAnim > 0) ud.attackAnim -= delta;
+  if (ud.hitFlash > 0) {
+    ud.hitFlash -= delta;
+    if (ud.hitFlash <= 0 && window.VX && VX.rig) VX.rig.resetFlash(ud.meshes, 0x000000, 0);
+  }
+
+  // ---- 位置插值（与 updateSyncedMonsters 同一套窗口）----
+  ud.interpTime = (ud.interpTime || 0) + delta;
+  var win = (typeof SyncManager !== 'undefined' && SyncManager.interpWindow)
+    ? SyncManager.interpWindow() / 1000
+    : 0.09;
+  var t = Math.min(1, ud.interpTime / Math.max(0.03, win));
+  var px = m.position.x, pz = m.position.z;
+  m.position.x = ud.prevX + (ud.targetX - ud.prevX) * t;
+  m.position.z = ud.prevZ + (ud.targetZ - ud.prevZ) * t;
+
+  var moved = Math.abs(m.position.x - px) + Math.abs(m.position.z - pz);
+  var targetAmt = moved > 0.0015 ? 1 : 0;
+  ud.moveAmt = ud.moveAmt + (targetAmt - ud.moveAmt) * (1 - Math.exp(-9 * delta));
+  if (targetAmt > 0) {
+    ud.walkPhase += delta * (ud.revealed ? 11 : 7);
+    // 朝向也跟着插值方向走（不自转，避免抖动）
+    if (ud.targetX !== ud.prevX || ud.targetZ !== ud.prevZ) {
+      m.rotation.y = Math.atan2(ud.targetX - ud.prevX, ud.targetZ - ud.prevZ);
+    }
+  }
+
+  // ---- 看破：我盯着它看也能看穿（结果上报给主机，全队一起看到它现形）----
+  if (!ud.revealed && !GS.downed && !GS.escaped && typeof camera !== 'undefined' && camera) {
+    var toP = new THREE.Vector3().subVectors(player.position, m.position);
+    var dist = toP.length();
+    toP.y = 0;
+    if (toP.lengthSq() > 0.0001) {
+      var camDir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+      camDir.y = 0;
+      if (camDir.lengthSq() > 0.0001) {
+        camDir.normalize();
+        var toIt = toP.clone().multiplyScalar(-1).normalize();
+        if (dist < IMPOSTOR.lookRange && camDir.dot(toIt) > IMPOSTOR.lookDot) {
+          ud.lookTimer = (ud.lookTimer || 0) + delta;
+          if (ud.lookTimer >= IMPOSTOR.lookTime) {
+            ud.lookTimer = 0;
+            // 本地先现形（立刻有反馈），同时让主机把这一只也揭示出来
+            revealImpostor(m, '👁 看清了！那不是' + ud.disguise.name + '，是伪装者！');
+            if (typeof PeerManager !== 'undefined' && PeerManager.connected) {
+              PeerManager.broadcast('impostor_look', { netId: ud.netId });
+            }
+          }
+        } else {
+          ud.lookTimer = Math.max(0, (ud.lookTimer || 0) - delta * 0.6);
+        }
+      }
+    }
+  }
+
+  // ---- 贴脸偷袭：加入者自己挨打自己结算（血量本来就是各自权威）----
+  if (!GS.downed && !GS.escaped && !GS.gameOver && ud.attackCooldown <= 0) {
+    if (player.position.distanceTo(m.position) < IMPOSTOR.attackRange) {
+      impostorAttack(m);
+      if (!ud.active) return;
+    }
+  }
+
+  animateImpostor(m, ud.moveAmt, delta, tm);
+  refreshImpostorLabel(m);
+}
+
+// ============================================================
+// 加入者：按主机快照重建伪装者（外观与主机那只完全一致）
+// ============================================================
+function createRemoteImpostor(data) {
+  var disguise = {
+    character: data.character || 'qike',
+    name: data.name || '队友',
+    // 伪装对象的编号/等级也要跟主机一致，否则加入者这边标签会"少一截"，一眼露馅
+    teamNo: data.teamNo || 0,
+    level: data.level || 1,
+    peerId: null
+  };
+  var root = createImpostorModel(disguise);
+  root.position.set(data.x, groundY, data.z);
+  root.rotation.y = data.rotY || 0;
+
+  var maxHp = data.maxHp || impostorMaxHp();
+  var ud = root.userData;
+
+  ud.isImpostor = true;
+  ud.isRemote = true;          // 标记：AI 不归本地管
+  ud.netId = data.id;
+  ud.active = true;
+  ud.isBoss = false;
+  ud.type = { hp: maxHp, dmg: IMPOSTOR.dmg, name: '伪装者', scale: 1 };
+  ud.hp = (typeof data.hp === 'number') ? data.hp : maxHp;
+  ud.maxHp = maxHp;
+
+  ud.revealed = false;
+  ud.hitFlash = 0;
+  ud.staggerTimer = 0;
+  ud.attackCooldown = 0.8;
+  ud.attackAnim = 0;
+  ud.walkPhase = 0;
+  ud.moveAmt = 0;
+  ud.lookTimer = 0;
+  ud.combatTimer = 0;
+  ud.disguise = disguise;
+  // 受击闪红 / 现形泛红都靠这份网格列表（spawnImpostor 里是同样一份，别漏）
+  ud.meshes = (window.VX && VX.rig) ? VX.rig.collectMeshes(root) : [];
+
+  // 插值起点/终点
+  ud.prevX = data.x;
+  ud.prevZ = data.z;
+  ud.targetX = data.x;
+  ud.targetZ = data.z;
+  ud.interpTime = 0;
+
+  scene.add(root);
+  impostors.push(root);
+
+  // 现形状态由主机决定：新创建时就已经现形过的话立刻补上
+  if (data.revealed) revealImpostor(root, null);
+
+  return root;
+}
+
+// ============================================================
+// 加入者：把快照里的最新状态套到本地模型上
+// ============================================================
+function applyRemoteImpostorState(m, data) {
+  var ud = m.userData;
+  if (!ud) return;
+
+  // 位置：记录旧的目标（判断"主机有没有还在推动它"不需要，插值即可）
+  ud.prevX = m.position.x;
+  ud.prevZ = m.position.z;
+  ud.targetX = data.x;
+  ud.targetZ = data.z;
+  ud.interpTime = 0;
+
+  // 血量以主机为准
+  if (typeof data.hp === 'number') ud.hp = data.hp;
+  if (typeof data.maxHp === 'number' && data.maxHp > 0) ud.maxHp = data.maxHp;
+
+  // 刚被现形：播本地效果（提示只在状态翻转时弹一次，不会被 20Hz 快照刷屏）
+  if (data.revealed && !ud.revealed) {
+    revealImpostor(m, '😱 ' + (ud.disguise ? ud.disguise.name : '队友') + ' 是伪装者！');
+  }
+
+  // 主机刚挥了一爪：补一段挥击动画，别让加入者看到"站桩挨打"
+  if (data.attackSeq !== undefined && data.attackSeq !== ud.lastAttackSeq) {
+    if (ud.lastAttackSeq !== undefined) ud.attackAnim = 0.38;
+    ud.lastAttackSeq = data.attackSeq;
+  }
+}
+
 function updateSingleImpostor(m, delta) {
   var ud = m.userData;
   var tm = (typeof clock !== 'undefined' && clock) ? clock.elapsedTime : 0;
 
-  // 本人已撤离（主机观战等待队友）/ 已结算：场上再留一只"队友"很奇怪，直接收掉
-  if ((GS.escaped || GS.gameOver) && !ud.done) {
+  // 整局结束才收掉。
+  // 主机自己撤离后处于"观战等待队友"，世界照常跑、快照照常发 ——
+  // 这时候不能把伪装者收掉，否则队友那边它会凭空消失。
+  if (GS.gameOver && !ud.done) {
     vanishImpostor(m, false);
     return;
   }
@@ -375,18 +599,30 @@ function updateSingleImpostor(m, delta) {
     return;
   }
 
-  var toP = new THREE.Vector3().subVectors(player.position, m.position);
-  var dist = toP.length();
+  // 追击目标：**最近的活人**（联机时可能是队友，不只是主机自己）。
+  // 原来写死追本机 player，伪装者永远朝主机走，队友站在旁边它看都不看。
+  // 注意下面的"攻击判定"仍然只对本机玩家生效（见 distLocal）——
+  // 每端只能结算自己的血，主机不能替队友扣血。
+  var chaseTarget = player.position;
+  if (typeof nearestAlivePlayerPos === 'function') {
+    var _np = nearestAlivePlayerPos(m.position);
+    if (_np) chaseTarget = _np;
+  }
+  var toP = new THREE.Vector3().subVectors(chaseTarget, m.position);
+  var dist = toP.length();          // 到"追击目标"的距离：只用于移动
+  var distLocal = player.position.distanceTo(m.position);  // 到本机玩家：用于看破与出手
   toP.y = 0;
 
   // ---------- 看破：正对着它看够时间 ----------
   if (!ud.revealed && !GS.downed && typeof camera !== 'undefined' && camera) {
     var camDir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
     camDir.y = 0;
-    if (camDir.lengthSq() > 0.0001 && toP.lengthSq() > 0.0001) {
+    var toLocal = new THREE.Vector3().subVectors(player.position, m.position);
+    toLocal.y = 0;
+    if (camDir.lengthSq() > 0.0001 && toLocal.lengthSq() > 0.0001) {
       camDir.normalize();
-      var toIt = toP.clone().multiplyScalar(-1).normalize();
-      if (dist < IMPOSTOR.lookRange && camDir.dot(toIt) > IMPOSTOR.lookDot) {
+      var toIt = toLocal.clone().multiplyScalar(-1).normalize();
+      if (distLocal < IMPOSTOR.lookRange && camDir.dot(toIt) > IMPOSTOR.lookDot) {
         ud.lookTimer += delta;
         if (ud.lookTimer >= IMPOSTOR.lookTime) {
           revealImpostor(m, '👁 看清了！那不是' + ud.disguise.name + '，是伪装者！');
@@ -405,7 +641,7 @@ function updateSingleImpostor(m, delta) {
   if (!GS.downed && !GS.escaped && !GS.gameOver && dist > wantDist) {
     var speed = ud.revealed ? IMPOSTOR.speedRevealed : IMPOSTOR.speedHunt;
     var dir = toP.clone().normalize();
-    if (typeof monsterNavDir === 'function') dir = monsterNavDir(m, player.position, dir);
+    if (typeof monsterNavDir === 'function') dir = monsterNavDir(m, chaseTarget, dir);
 
     var step = speed * delta;
     m.position.add(dir.clone().multiplyScalar(step));
@@ -430,7 +666,7 @@ function updateSingleImpostor(m, delta) {
   }
 
   // ---------- 偷袭 ----------
-  if (!GS.downed && !GS.escaped && !GS.gameOver && dist < IMPOSTOR.attackRange && ud.attackCooldown <= 0) {
+  if (!GS.downed && !GS.escaped && !GS.gameOver && distLocal < IMPOSTOR.attackRange && ud.attackCooldown <= 0) {
     impostorAttack(m);
     if (!ud.active) return;
   }
@@ -520,11 +756,15 @@ function refreshImpostorLabel(m) {
   if (!lb || !lb.ctx) return;
 
   var frac = ud.maxHp > 0 ? (ud.hp / ud.maxHp) : 1;
-  var text = ud.revealed ? '伪装者' : ud.disguise.name;
-  var sig = text + '|' + Math.round(frac * 20);
+  // 签名里要带上编号/等级：队友升级或换号时伪装者的标签也得跟着重画
+  var d = ud.disguise || {};
+  var sig = (ud.revealed
+    ? 'REV'
+    : ('D|' + (d.teamNo || 0) + '|' + (d.level || 1) + '|' + (d.name || '')))
+    + '|' + Math.round(frac * 20);
   if (lb.lastSig === sig) return;
   lb.lastSig = sig;
-  drawImpostorLabel(lb.canvas, lb.ctx, lb.texture, text, frac, ud.revealed);
+  paintImpostorLabel(lb.canvas, lb.ctx, lb.texture, d, frac, ud.revealed);
 }
 
 // ============================================================
@@ -581,13 +821,27 @@ function impostorAttack(m) {
 
   ud.attackCooldown = IMPOSTOR.attackCooldown;
   ud.attackAnim = 0.38;
+  // 挥击序号：快照里带上，加入者据此补一段挥击动画
+  // （否则它那边只看到自己的血在掉、伪装者站着一动不动）
+  ud.attackSeq = (ud.attackSeq || 0) + 1;
 
   // 第一下是"偷袭"：伪装状态下贴上来这一击要更疼，
   // 否则玩家挨了一下根本不会在意 —— 伪装被发现也就没代价了。
   var wasDisguised = !ud.revealed;
 
   // 第一次动手才撕掉伪装 —— 之前它一直"是队友"
-  if (wasDisguised) revealImpostor(m, '😱 ' + ud.disguise.name + ' 撕下了伪装！');
+  if (wasDisguised) {
+    revealImpostor(m, '😱 ' + ud.disguise.name + ' 撕下了伪装！');
+    // 加入者本地挨的这一下，主机并不知道它已经动手了（攻击不广播），
+    // 主机那边它还会顶着"队友"的脸继续晃。这里把"已现形"报给主机一次，
+    // 快照就会让所有人的画面一致。
+    if (GS.mode === 'multiplayer' && !GS.isHost && ud.isRemote && !ud._revealReported) {
+      ud._revealReported = true;
+      if (typeof PeerManager !== 'undefined' && PeerManager.connected) {
+        PeerManager.broadcast('impostor_look', { netId: ud.netId });
+      }
+    }
+  }
 
   var dmg = (typeof monsterHitDamage === 'function') ? monsterHitDamage(m) : IMPOSTOR.dmg;
   if (wasDisguised) dmg = Math.round(dmg * (IMPOSTOR.ambushMul || 1));
@@ -633,13 +887,33 @@ function impostorAttack(m) {
 // ============================================================
 
 // 返回 true 表示这一下把它打死了。
-// 注意：不走 dealMonsterDamage —— 那条路在联机加入者端会广播 monster_damage，
-// 而伪装者没有 netId，主机会当成无效包拒收，血条就会来回跳。
+//
+// 伤害链路刻意不走 dealMonsterDamage：
+//   · 单机 / 主机：本地权威扣血，死亡由 defeatImpostor 收尾
+//   · 加入者：本地预测扣血（立刻有反馈）+ 上报主机做权威结算，
+//     死亡判定一律交给主机 —— 加入者只把血压到 1 点，等快照里它消失
 function damageImpostor(m, dealt) {
   var ud = m && m.userData;
   if (!ud || !ud.active) return false;
 
-  ud.hp -= (typeof dealt === 'number' && isFinite(dealt)) ? dealt : 0;
+  var dmg = (typeof dealt === 'number' && isFinite(dealt)) ? dealt : 0;
+  var isJoiner = (GS.mode === 'multiplayer' && !GS.isHost);
+  var reportToHost = isJoiner && typeof PeerManager !== 'undefined' && PeerManager.connected;
+
+  if (reportToHost) {
+    PeerManager.broadcast('monster_damage', {
+      netId: ud.netId || null,
+      dmg: dmg,
+      isImpostor: true
+    });
+    // 预测**不判死**：伤害包还没到主机时本地就移除的话，
+    // 主机那只还活着，50ms 后快照又把它建回来 —— 看起来就是"打死了又复活"。
+    // 所以血条可以打到 0，但移除动作交给主机（快照里它消失 = 真的死了）。
+    ud.hp = Math.max(0, ud.hp - dmg);
+  } else {
+    ud.hp -= dmg;
+  }
+
   ud.hitFlash = 0.25;
   ud.staggerTimer = Math.max(ud.staggerTimer || 0, 0.22);
   // 硬直期间 AI 不跑（也就没有碰撞），被打退时可能正好压进墙里，
@@ -652,6 +926,9 @@ function damageImpostor(m, dealt) {
   if (!ud.revealed) revealImpostor(m, '👊 打中了！这个' + ud.disguise.name + '是假的！');
 
   if (window.VX && VX.rig) VX.rig.flash(ud.meshes, 0xff3b3b, 0.85);
+
+  // 加入者的击杀判定一律以主机为准
+  if (reportToHost) return false;
   return ud.hp <= 0;
 }
 
@@ -756,6 +1033,18 @@ function getImpostorTargets(onlyRevealed) {
 }
 
 // ============================================================
+// 联机：按 netId 找本地那一只（主机收伤害上报 / 加入者找模型都用它）
+// ============================================================
+function findImpostorByNetId(netId) {
+  if (!netId) return null;
+  for (var i = 0; i < impostors.length; i++) {
+    var m = impostors[i];
+    if (m && m.userData && m.userData.netId === netId && m.userData.active) return m;
+  }
+  return null;
+}
+
+// ============================================================
 // 导出
 // ============================================================
 window.IMPOSTOR = IMPOSTOR;
@@ -767,3 +1056,7 @@ window.getImpostorTargets = getImpostorTargets;
 window.damageImpostor = damageImpostor;
 window.defeatImpostor = defeatImpostor;
 window.revealImpostor = revealImpostor;
+window.createRemoteImpostor = createRemoteImpostor;
+window.applyRemoteImpostorState = applyRemoteImpostorState;
+window.findImpostorByNetId = findImpostorByNetId;
+window.removeImpostorFromScene = removeImpostorFromScene;

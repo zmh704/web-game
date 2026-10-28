@@ -443,6 +443,11 @@ function updateChaserHoldingJoiner(m, delta, GRAB_RANGE) {
     return;
   }
 
+  // 挟持期间冻结"自动离开"倒计时：拖拽路线最长可到 30 秒（captiveTimer 上限），
+  // 而 grab 时只把 leaveTimer 刷到 20 秒 —— 拖到一半抓捕者凭空消失，
+  // 玩家直接被丢在原地（看起来像"抓走了又没了"）。
+  chaserLeaveTimer = Math.max(chaserLeaveTimer, 10);
+
   // 与单机 captureState.captured 分支一致：抓捕者向 Boss 移动，加入者跟随抓捕者
   var bossTarget = null;
   for (var bIdx = 0; bIdx < bosses.length; bIdx++) {
@@ -457,6 +462,10 @@ function updateChaserHoldingJoiner(m, delta, GRAB_RANGE) {
   var dDist = dDir.length();
   if (dDist > 3.0) {
     dDir.normalize();
+    // 拖着加入者跨房间也必须走门（与单机拖拽、巡逻、追击同款）：
+    // 医院里 Boss 常在隔墙的房间，直线拖拽会顶着墙被碰撞推回来，
+    // 表现就是"抓捕者卡在墙上蹭，永远到不了 Boss"。
+    if (typeof monsterNavDir === 'function') dDir = monsterNavDir(m, dt, dDir);
     var dMove = dDir.clone().multiplyScalar(dragSpeed);
     m.position.add(dMove);
     m.rotation.y = Math.atan2(dMove.x, dMove.z);

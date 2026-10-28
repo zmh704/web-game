@@ -243,6 +243,10 @@ function initScene() {
     keys[e.key.toLowerCase()] = true;
     if (e.key === ' ') { e.preventDefault(); tryJump(); }
     if (e.key === 'f' || e.key === 'F') { toggleFlashlight(); }
+    // 桌面端：V 切换第一/第三人称（手机上用 HUD 的「视角」按钮）
+    if (e.key === 'v' || e.key === 'V') { if (typeof toggleCameraMode === 'function') toggleCameraMode(); }
+    // 桌面端：E 开关身边的门（医院地图；手机上用 HUD 的「开门」按钮）
+    if (e.key === 'e' || e.key === 'E') { if (typeof toggleNearbyDoor === 'function') toggleNearbyDoor(); }
     // 桌面端：被抓住时按空格挣脱
     if (e.key === ' ' && captureState && captureState.captured) {
       e.preventDefault();
@@ -267,8 +271,24 @@ function initScene() {
 
   setupTouchControls();
 
+  // 性能：预创建手电筒灯光（常驻、强度 0，见 FlashlightSystem.ensureFlashlightLight）。
+  // 必须放在下面的 renderer.compile 之前 —— 让"有聚光灯"的着色器变体
+  // 在开局就编译好，游戏中途开关手电零编译、零卡顿。
+  if (typeof ensureFlashlightLight === 'function') {
+    try { ensureFlashlightLight(); } catch (e) { }
+  }
+
+  // 性能：预编译着色器。three.js 对每种材质变体（受光模式/雾/贴图组合）
+  // 首次渲染时才编译 GLSL 程序，游戏中途第一次遇到就是 10~50ms 的硬卡顿
+  // ——这就是"偶尔卡顿"的直接来源之一。开局一次性编译完。
+  try {
+    if (renderer && window.scene && camera) renderer.compile(window.scene, camera);
+  } catch (e) { }
+
   document.getElementById('hud').classList.remove('hidden');
   updateHUD();
+  // 恢复上次用过的视角（第一/第三人称），并同步按钮图标
+  if (typeof loadCameraMode === 'function') loadCameraMode();
   loading.style.opacity = '0';
   setTimeout(function () { loading.style.display = 'none' }, 500);
   GS.running = true;

@@ -1042,6 +1042,10 @@ function monsterAttack(m) {
   var dir = new THREE.Vector3().subVectors(player.position, m.position);
   var dist = dir.length();
   if (dist < monsterAttackReach(m)) {
+    // 专属模型的攻击动画（主刀医生劈锯 / 病人乱挠）
+    if (typeof m.__creatureAttack === 'function') {
+      try { m.__creatureAttack(m); } catch (e) { }
+    }
     // 伤害按"击杀所需次数"计算（Boss最少3次，小怪最少5次，防御已计入）
     var dmg = monsterHitDamage(m);
     if (GS._shielded) {
@@ -1095,6 +1099,8 @@ function monsterAttack(m) {
 // 怪物攻击特效：爪击光带 + 受击爆点 + 震屏
 function createMonsterAttackEffect(m) {
   if (!window.VX || !VX.vfx) return;
+  // 医院专属怪物（主刀医生 / 疯魔病人）：主题化攻击特效替代通用爪击
+  if (typeof hospitalAttackFX === 'function' && hospitalAttackFX(m)) return;
   var t = m.userData.type || {};
   var effColor = t.emissive || 0xff3322;
   var scale = t.scale || 1;
@@ -1141,9 +1147,6 @@ function showGameOver() {
   document.getElementById('final-answers').textContent = '✅ 答对题目: ' + GS.correct + '/' + GS.total;
   document.getElementById('final-weapons').textContent = '⚔️ 获得武器: ' + GS.weaponCount + '/3';
   if (failed) AudioMgr.playCharacterVoice('defeat');
-  // 失败时不显示"下一章节"按钮（只有通关后由gameWin控制显示）
-  var nextBtn = document.getElementById('next-chapter-btn');
-  if (nextBtn) nextBtn.style.display = 'none';
   document.getElementById('game-over').style.display = 'flex';
   try { if (isPointerLocked) document.exitPointerLock(); } catch (e) { }
 }
@@ -1159,45 +1162,17 @@ function gameWin() {
   }
 
   GS.totalStars += GS.stars;
+  // 已经没有"下一章"这个概念了：地图全部解锁，通关只累计星星
+  ProgressMgr.save();
 
-  var hasNext = GS.chapter < CHAPTERS.length;
-  if (hasNext) {
-    ProgressMgr.unlockChapter(GS.chapter + 1);
-  } else {
-    // 最后一章也要保存累计星星
-    ProgressMgr.save();
-  }
-
-  document.getElementById('result-title').textContent = '🎉 章节 ' + GS.chapter + ' 通关!';
+  var mapName = (typeof mapDataById === 'function') ? mapDataById(GS.chapter).name : '';
+  document.getElementById('result-title').textContent = '🎉 ' + (mapName ? mapName + ' ' : '') + '通关!';
   document.getElementById('final-answers').textContent = '✅ 答对题目: ' + GS.correct + '/' + GS.total;
   document.getElementById('final-weapons').textContent = '⚔️ 获得武器: ' + GS.weaponCount + '/3';
   AudioMgr.playCharacterVoice('victory');
 
-  var nextBtn = document.getElementById('next-chapter-btn');
-  if (hasNext) {
-    nextBtn.style.display = 'inline-block';
-  } else {
-    nextBtn.style.display = 'none';
-    document.getElementById('result-title').textContent = '🎊 全部章节通关!';
-  }
-
   document.getElementById('game-over').style.display = 'flex';
   try { if (isPointerLocked) document.exitPointerLock(); } catch (e) { }
-}
-
-// 下一章节：保存衔接信息后刷新页面，加载时自动直接进入下一章
-function nextChapter() {
-  if (GS.chapter >= CHAPTERS.length) return;
-  var btn = document.getElementById('next-chapter-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ 加载中...'; }
-  try {
-    localStorage.setItem('miracleForest_pending', JSON.stringify({
-      chapter: GS.chapter + 1,
-      character: GS.character,
-      difficulty: GS.difficulty
-    }));
-  } catch (e) { console.warn('保存章节衔接信息失败', e); }
-  location.reload();
 }
 
 // 重新选择：清除衔接信息，回到选择界面
