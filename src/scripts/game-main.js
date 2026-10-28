@@ -3,6 +3,10 @@
 // ============================================================
 var _gameOverBroadcasted = false; // 防止重复广播
 
+// 性能：拖尾粒子复用几何体（原来每颗拖尾都 new 一个 SphereGeometry，
+// 连续射击/燃烧弹时每秒几十个 buffer 分配，GC 一攒一放就是一阵卡顿）
+var _trailGeoS = null, _trailGeoM = null;
+
 // 加入者本地怪物攻击检测（在 sendInput 前执行，确保发送最新 HP）
 function joinerLocalMonsterAttack(delta) {
   if (typeof monsters === 'undefined' || !player) return;
@@ -661,7 +665,7 @@ function update(delta) {
     excess.forEach(function (p) { try { scene.remove(p); } catch (e) { } });
   }
 
-  // 更新移动状态（用于动画）
+// 更新移动状态（用于动画）
   if (moveDir.length() > 0) {
     playerAnimState.moving = true;
     playerAnimState.idle = false;
@@ -673,6 +677,12 @@ function update(delta) {
   for (var i = projectiles.length - 1; i >= 0; i--) {
     var p = projectiles[i];
     if (!p.parent) { projectiles.splice(i, 1); continue; }
+
+    // 性能：拖尾粒子几何体全部复用（见文件顶部的 _trailGeoS/_trailGeoM）
+    if (!_trailGeoS) {
+      _trailGeoS = new THREE.SphereGeometry(0.05, 4, 4);
+      _trailGeoM = new THREE.SphereGeometry(0.07, 4, 4);
+    }
 
     // 重力：碎屑/火星抛物线下落
     if (p.userData.gravity && p.userData.vel) {
@@ -711,7 +721,7 @@ function update(delta) {
       // 性能优化：大幅降低拖尾粒子生成率
       if (Math.random() < 0.04 && projectiles.length < 200) {
         var trail = new THREE.Mesh(
-          new THREE.SphereGeometry(0.05, 4, 4),
+          _trailGeoS,
           new THREE.MeshBasicMaterial({ color: w.color, transparent: true, opacity: 0.7 })
         );
         trail.position.copy(p.position);
@@ -747,7 +757,7 @@ function update(delta) {
       }
       if (Math.random() < 0.5) {
         var ftrail = new THREE.Mesh(
-          new THREE.SphereGeometry(0.07, 4, 4),
+          _trailGeoM,
           new THREE.MeshBasicMaterial({ color: 0xff6622, transparent: true, opacity: 0.7 })
         );
         ftrail.position.copy(p.position);

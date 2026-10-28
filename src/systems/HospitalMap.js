@@ -403,6 +403,15 @@ function buildHospital() {
   scene.fog = new THREE.Fog(fogHex, 6, 24);
   window.__HOSPITAL_FOG = fogHex;
 
+  // 性能：相机远平面与雾距耦合（同 NightSystem.applyNightFog 的做法）。
+  // 医院这里直接设雾不走 applyNightFog，所以 far 收紧要单独做一份：
+  // 原来相机 far=120，雾 24 米外的东西其实已经全融进雾色，
+  // 却仍参与剔除/绘制 —— 收紧到 32 后，draw call 直接少一小半。
+  if (typeof camera !== 'undefined' && camera && camera.isPerspectiveCamera) {
+    camera.far = 32;
+    camera.updateProjectionMatrix();
+  }
+
   // ---------- 共享材质 ----------
   var wallTileCache = {};
   HMAP.wallMatFor = function (len, h) {
@@ -474,6 +483,33 @@ function buildHospital() {
   buildHospitalLights();
   buildHospitalDecals();
   createHospitalHelicopter();
+
+  // ---------- 静态矩阵冻结 ----------
+  // 医院有 2600+ 网格，全部 matrixAutoUpdate=true 时渲染器每帧都要为
+  // 每个对象重算 4x4 矩阵。而医院里除了门扇（开关动画）、直升机（旋翼）
+  // 和玩家，其余东西从建好那一刻起永远不动 —— 冻结它们，每帧省掉
+  // 一整遍矩阵重算 + 层级更新。
+  // 注意：本函数在建玩家/怪物等动态实体之前执行（buildRoom 阶段），
+  // 所以此时场景里只有医院本体，冻结是安全的；动态实体是之后才 add 的。
+  (function freezeStaticMatrices() {
+    var doorGroups = HMAP.doors.map(function (d) { return d.group; });
+    var shipRoot = HMAP.ship || null;
+    var count = 0;
+    scene.traverse(function (o) {
+      // 排除动画对象及其子层级
+      var p = o;
+      while (p) {
+        if (doorGroups.indexOf(p) !== -1) return;
+        if (shipRoot && p === shipRoot) return;
+        p = p.parent;
+      }
+      if (o === scene) return;
+      o.updateMatrix();
+      o.matrixAutoUpdate = false;
+      count++;
+    });
+    console.log('[Perf] 医院静态矩阵冻结 ' + count + ' 个对象');
+  })();
 
   // ---------- 世界导航/出生点修复 ----------
   // 门开着的时候怪物也能过 → 交给 monsterNavDir 的医院分支处理
