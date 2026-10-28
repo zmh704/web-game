@@ -83,6 +83,20 @@ VX.palette = {
       trim: 0xb28dff,
       accent: 0xb28dff,
       decor: 'space'
+    },
+    // 6: 废弃医院 —— 冷绿、低饱和，夜视下几乎只剩荧光灯的惨白
+    6: {
+      name: '医院',
+      sky: 0x1a2420,
+      fog: 0x10160f,
+      ground: '#3a423a',
+      groundSpot: '#454e43',
+      groundDark: '#2b322b',
+      wall: 0x4e5249,
+      wallDark: 0x353a33,
+      trim: 0x8fbf9a,
+      accent: 0x5ce6a0,
+      decor: 'hospital'
     }
   }
 };

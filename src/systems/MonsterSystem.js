@@ -75,6 +75,11 @@ function pickEnemySpawnSpot(opts) {
     }
     if (!ok) continue;
 
+    // 医院地图：随机点很可能正好落在隔墙 / 楼梯里，挪到最近的空地
+    if (typeof mapSnapOpen === 'function') {
+      var sp = mapSnapOpen(x, z, 1.1);
+      x = sp.x; z = sp.z;
+    }
     return new THREE.Vector3(x, groundY, z);
   }
 
@@ -149,6 +154,10 @@ function spawnBossInRoom(room) {
   if (roomOk) {
     var x = room.cx + (Math.random() - 0.5) * (roomSize - 12);
     var z = room.cz + (Math.random() - 0.5) * (roomSize - 12);
+    if (typeof mapSnapOpen === 'function') {
+      var _bs = mapSnapOpen(x, z, 1.8);   // Boss 体型大，留宽一点
+      x = _bs.x; z = _bs.z;
+    }
     g.position.set(x, groundY, z);
   } else {
     var spot = (typeof pickEnemySpawnSpot === 'function')
@@ -167,7 +176,7 @@ function spawnBossInRoom(room) {
   if (!room) room = ROOMS[0];
 
   g.userData = {
-    radius: 0.9 * (scaledT.scale || 1),
+    radius: (scaledT.radius || 0.9) * (scaledT.scale || 1),
     active: true,
     walkPhase: 0,
     type: scaledT,
@@ -191,11 +200,13 @@ function spawnBossInRoom(room) {
 // 随机选择小怪类型：50%概率远程攻击型，50%概率近战型（近战怪每10秒急速冲刺）
 var RANGED_MINIONS = ['暗影射手', '毒液喷射者'];
 function pickMinionType() {
-  if (Math.random() < 0.5) {
+  var chd = currentChapterData();
+  // 有专属模型的章节（医院）不混入别章的远程怪：
+  // 走廊里突然出现一只"霜刺虫"会直接把恐怖氛围破坏掉
+  if (!(chd && chd.onlyOwnMonsters) && Math.random() < 0.5) {
     var name = RANGED_MINIONS[Math.floor(Math.random() * RANGED_MINIONS.length)];
     return MONSTER_TYPES[name];
   }
-  var chd = currentChapterData();
   var monsterTypes = chd.monsters;
   if (!monsterTypes || monsterTypes.length === 0) monsterTypes = ["追风怪"];
   var mName = monsterTypes[Math.floor(Math.random() * monsterTypes.length)];
@@ -217,6 +228,12 @@ function spawnEnergyOrb() {
 
   var x = targetRoom.cx + (Math.random() - 0.5) * (roomSize - 12);
   var z = targetRoom.cz + (Math.random() - 0.5) * (roomSize - 12);
+
+  // 医院：房间里到处是隔墙，随机点要挪到空地，否则宝箱会嵌在墙里
+  if (typeof mapSnapOpen === 'function') {
+    var _sp = mapSnapOpen(x, z, 1.4);
+    x = _sp.x; z = _sp.z;
+  }
 
   // 金色宝箱模型
   var chest = new THREE.Group();
@@ -291,11 +308,16 @@ function initMonsters() {
 
   var x = spawnRoom.cx + (Math.random() - 0.5) * (roomSize - 12);
   var z = spawnRoom.cz + (Math.random() - 0.5) * (roomSize - 12);
+  // 医院：随机点可能落在隔墙/楼梯里，挪到空地（否则小怪会卡在墙里不动）
+  if (typeof mapSnapOpen === 'function') {
+    var _ms = mapSnapOpen(x, z, 1.1);
+    x = _ms.x; z = _ms.z;
+  }
   g.position.set(x, groundY, z);
   scene.add(g);
 
   g.userData = {
-    radius: 0.9 * (scaledT.scale || 1),
+    radius: (scaledT.radius || 0.9) * (scaledT.scale || 1),
     active: true,
     walkPhase: 0,
     type: scaledT,
@@ -347,7 +369,7 @@ function spawnCenterRoomMonsters() {
   scene.add(g);
 
   g.userData = {
-    radius: 0.9 * (scaledT.scale || 1),
+    radius: (scaledT.radius || 0.9) * (scaledT.scale || 1),
     active: true,
     walkPhase: 0,
     type: scaledT,
@@ -405,7 +427,7 @@ function respawnMonster(m) {
   scene.add(g);
 
   g.userData = {
-    radius: 0.9 * (t.scale || 1),
+    radius: (t.radius || 0.9) * (t.scale || 1),
     active: true,
     walkPhase: 0,
     type: t,

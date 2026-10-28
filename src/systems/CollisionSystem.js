@@ -46,6 +46,13 @@ function _colInDoorGap(coord, radius, doorHalf) {
  */
 function resolveWallCollision(pos, radius, y) {
   if (!pos) return false;
+
+  // 医院地图：墙体是带高度区间的 AABB 列表（室内楼层 + 屋顶），
+  // 下面这套网格数学碰撞假设"全图只有一个平面"，在楼上/楼下会互相干扰。
+  if (typeof HMAP !== 'undefined' && HMAP && HMAP.active && typeof hospitalResolveCollision === 'function') {
+    return hospitalResolveCollision(pos, radius, y);
+  }
+
   var r = (typeof radius === 'number' && radius > 0) ? radius : 0.4;
 
   // 尺寸每次从真正的来源读，不用写死的副本。
@@ -132,6 +139,13 @@ function entityRadius(obj, fallback) {
 // ============================================================
 function monsterNavDir(m, targetPos, fallbackDir) {
   if (!m || !targetPos) return fallbackDir;
+
+  // 医院：走廊 + 8 个房间，3×3 网格导航会把怪物指向房间内部的隔墙，
+  // 改用医院自己的导航图（走廊节点 / 门节点 / 房间中心）。
+  if (typeof HMAP !== 'undefined' && HMAP && HMAP.active && typeof hospitalNavDir === 'function') {
+    return hospitalNavDir(m, targetPos, fallbackDir);
+  }
+
   if (typeof roomIndexOf !== 'function' || typeof ROOMS === 'undefined' || !ROOMS) return fallbackDir;
 
   var myIdx = roomIndexOf(m.position.x, m.position.z);

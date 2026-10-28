@@ -44,11 +44,16 @@ var BALANCE = {
     return 1 + 0.24 * ((ch || 1) - 1);
   },
 
-  // 难度：只影响战斗数值（题库另由 QDB 决定）
+  // 难度：影响战斗数值 + 撤离所需的能量门槛
+  // （题库另由 QDB 决定）
+  //
+  // energy 是这一局的撤离门槛：初级 10 / 中级 20 / 高级 30。
+  // 原来是写在章节数据里的 escapeEnergy，现在难度成了唯一的门槛来源，
+  // 同一张地图选不同难度就是不同的肝度。
   difficulty: {
-    easy: { damage: 0.80, chase: 0.90, hp: 0.85, name: '初级' },
-    medium: { damage: 1.00, chase: 1.00, hp: 1.00, name: '中级' },
-    hard: { damage: 1.15, chase: 1.10, hp: 1.20, name: '高级' }
+    easy: { damage: 0.80, chase: 0.90, hp: 0.85, name: '初级', energy: 10 },
+    medium: { damage: 1.00, chase: 1.00, hp: 1.00, name: '中级', energy: 20 },
+    hard: { damage: 1.15, chase: 1.10, hp: 1.20, name: '高级', energy: 30 }
   },
 
   combat: {
@@ -148,6 +153,27 @@ function balanceDiff(name) {
   return BALANCE.difficulty[name] || BALANCE.difficulty.medium;
 }
 
+/**
+ * 本局撤离需要的能量 —— **由难度决定**，和选哪张地图无关。
+ * 初级 10 / 中级 20 / 高级 30（配在 BALANCE.difficulty[*].energy）。
+ */
+function energyForDifficulty(name) {
+  return balanceDiff(name).energy || 20;
+}
+
+/** 地图选择界面上要列出来的地图（只有 pickable 的） */
+function pickableMaps() {
+  return CHAPTERS.filter(function (c) { return c.pickable; });
+}
+
+/** 按 id 取地图数据 */
+function mapDataById(id) {
+  for (var i = 0; i < CHAPTERS.length; i++) {
+    if (CHAPTERS[i].id === id) return CHAPTERS[i];
+  }
+  return CHAPTERS[0];
+}
+
 // ============================================================
 // 章节数据
 // ============================================================
@@ -183,11 +209,12 @@ var CHAPTERS = window.CHAPTERS || [
         unlocked: false
     },
     {
+        // 可选地图之一（地图选择界面只列出 pickable 的）
         id: 3,
-        name: '金沙沙漠',
+        name: '金色沙漠',
         icon: '🏜️',
         color: '#ffaa44',
-        desc: '穿越炽热的金沙沙漠，发现远古金字塔的秘密',
+        desc: '烈日下的金沙与金字塔，沙暴里藏着远古的守墓者',
         bgColor: 0x2e2a1a,
         floorColor: 0x4a4a2a,
         wallColor: 0x6a5a3a,
@@ -195,7 +222,8 @@ var CHAPTERS = window.CHAPTERS || [
         monsters: ['沙暴灵', '沙蝎'],
         bossName: '法老之魂',
         escapeEnergy: 12,
-        unlocked: false
+        unlocked: true,
+        pickable: true
     },
     {
         id: 4,
@@ -226,6 +254,26 @@ var CHAPTERS = window.CHAPTERS || [
         bossName: '虚空主宰',
         escapeEnergy: 20,
         unlocked: false
+    },
+    {
+        // 第 6 章：室内医院地图（见 src/systems/HospitalMap.js）
+        // 和其他章节最大的不同：地图是楼宇，撤离点在**屋顶停机坪**，
+        // 必须先找到楼梯间爬上去，而不是在平地上走到飞船边。
+        id: 6,
+        name: '废弃医院',
+        icon: '🏥',
+        color: '#5ce6a0',
+        desc: '走廊尽头的灯还在闪。找到楼梯间上天台，救援直升机在等你',
+        bgColor: 0x10160f,
+        floorColor: 0x2a322a,
+        wallColor: 0x4e5249,
+        fogColor: 0x10160f,
+        monsters: ['疯魔病人', '邪恶幽灵'],
+        onlyOwnMonsters: true,   // 不混入别章的远程小怪（破坏医院氛围）
+        bossName: '主刀医生',
+        escapeEnergy: 6,
+        unlocked: true,
+        pickable: true
     }
 ];
 
@@ -601,6 +649,19 @@ var MONSTER_TYPES = {
     '星灵': { color: 0x442266, emissive: 0x8844dd, eyes: 5, speed: 3.2, hp: 270, dmg: 24, scale: 0.9, fly: true },
     '虚空兽': { color: 0x1a0a33, emissive: 0x440099, eyes: 7, speed: 2.8, hp: 340, dmg: 28, scale: 1.3, spikes: true, fangs: true },
     '陨石龙': { color: 0x331144, emissive: 0x6622cc, eyes: 4, speed: 3.4, hp: 305, dmg: 26, scale: 1.1, spikes: true, fangs: true },
+    // 第 6 章 废弃医院：两种**有专属人形模型**的怪物（见 src/systems/HospitalCreatures.js）
+    // model 字段决定用哪套建模；scale=1 时病人约 1.72 米、幽灵约 1.75 米（含浮动）
+    // 攻击方式分工：病人 = 近战（10 秒一次急速扑击），幽灵 = 远程（怨灵尖啸弹丸）
+    '邪恶幽灵': {
+        model: 'ghost', color: 0x22443a, emissive: 0x4dffc0,
+        speed: 2.6, hp: 250, dmg: 20, scale: 1.0, fly: true, radius: 0.44,
+        ranged: true, rangedCooldown: 2.6
+    },
+    '疯魔病人': {
+        model: 'patient', color: 0x6b5b4a, emissive: 0xbfe8c8,
+        speed: 3.2, hp: 275, dmg: 23, scale: 1.0, radius: 0.46,
+        charge: true
+    },
     // 远程攻击怪物：血少、伤害低，但会放风筝，必须优先处理
     '暗影射手': { color: 0x220044, emissive: 0x6600aa, eyes: 4, speed: 1.8, hp: 225, dmg: 16, scale: 0.9, ranged: true, rangedCooldown: 2.0, fangs: true },
     '毒液喷射者': { color: 0x224400, emissive: 0x44aa00, eyes: 6, speed: 1.5, hp: 205, dmg: 14, scale: 0.8, ranged: true, rangedCooldown: 1.8, fangs: true },
@@ -618,7 +679,11 @@ var BOSSES = {
     2: { name: '冰霜巨人', color: 0x224477, emissive: 0x3399ff, eyes: 3, speed: 2.0, hp: 760, dmg: 46, scale: 2.4, spikes: true, fangs: true },
     3: { name: '法老之魂', color: 0x664411, emissive: 0xcc8822, eyes: 2, speed: 2.4, hp: 800, dmg: 47, scale: 2.2, fangs: true },
     4: { name: '炎魔领主', color: 0x771100, emissive: 0xcc2200, eyes: 4, speed: 2.6, hp: 860, dmg: 48, scale: 2.5, spikes: true, fangs: true },
-    5: { name: '虚空主宰', color: 0x330066, emissive: 0x6600cc, eyes: 8, speed: 2.8, hp: 920, dmg: 50, scale: 2.7, spikes: true, fangs: true }
+    5: { name: '虚空主宰', color: 0x330066, emissive: 0x6600cc, eyes: 8, speed: 2.8, hp: 920, dmg: 50, scale: 2.7, spikes: true, fangs: true },
+    // 第 6 章：主刀医生 —— 专属人形模型（白大褂/手术帽/口罩/头镜/骨锯）
+    // scale 只放大到 1.28（约 2.5 米）：医院层高 3.3 米、门洞 2.15 米，
+    // 原来 2.3 倍会变成 4.5 米的巨人，既穿天花板又进不了门
+    6: { name: '主刀医生', model: 'surgeon', color: 0x2b3a33, emissive: 0x53e08a, speed: 2.3, hp: 880, dmg: 46, scale: 1.28, radius: 0.48 }
 };
 
 // ============================================================

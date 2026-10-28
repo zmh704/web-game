@@ -19,6 +19,13 @@ var VX_ROOM = {
 };
 
 function buildRoom() {
+  // 医院章节走完全独立的场景构建（室内楼层 + 楼梯 + 开关门），
+  // 那套结构和这里的"3×3 矮墙房间 + 野外装饰"没有任何共通之处。
+  if (typeof isHospitalMap === 'function' && isHospitalMap() && typeof buildHospital === 'function') {
+    buildHospital();
+    return;
+  }
+
   var theme = VX.palette.theme(GS.chapter);
   var M = VX.materials, S = VX.shape;
   var chapterData = CHAPTERS[GS.chapter - 1] || CHAPTERS[0];

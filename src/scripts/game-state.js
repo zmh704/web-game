@@ -32,6 +32,9 @@ var GS = {
   // 和 escaping 的区别：escaping 是"起飞动画进行中"，escaped 是"我已经走了"。
   // 主机先撤离时不能把世界停下来（否则队友全冻住），靠这个标记进入观战等待。
   escaped: false,
+  // 视角模式：'third' 第三人称（默认，越肩跟随）/ 'first' 第一人称（贴眼）
+  // 由 HUD 上的「视角」按钮切换，见 game-main.js 的 toggleCameraMode()
+  cameraMode: 'third',
   skillEnergy: 100,
   skillMax: 100,
   skillReady: true,
@@ -59,7 +62,10 @@ var GS = {
   // 联机模式字段
   mode: 'single',              // 'single' | 'multiplayer'
   isHost: false,               // 联机模式下是否为"主机"
-  playerId: null               // 联机模式下的玩家ID
+  playerId: null,              // 联机模式下的玩家ID
+  // 自己的队伍编号（P1/P2…）：主机统一分配、随快照下发，0 = 未分配/单机。
+  // 头顶标签、HUD 队友列表、小地图三处都读它，保证是同一个号。
+  myTeamNo: 0
 };
 
 // ============================================================
@@ -136,7 +142,10 @@ function applyEnergyGain(n, fromRemote) {
 
   updateHUD();
   if (GS.energy >= max) {
-    showMessage('🚀 能量集满! 快回飞船起飞!', 0x66ffcc);
+    // 医院地图的撤离点在屋顶停机坪，提示不能还是"回飞船"
+    showMessage((typeof HMAP !== 'undefined' && HMAP && HMAP.active)
+      ? '🚀 能量集满! 快上天台登机!'
+      : '🚀 能量集满! 快回飞船起飞!', 0x66ffcc);
     // 能量已满，移除场上的金色宝箱
     if (typeof energyOrb !== 'undefined' && energyOrb) {
       try { scene.remove(energyOrb); } catch (e) { }
@@ -257,22 +266,31 @@ function showChapterSelect() {
   var grid = document.getElementById('chapter-grid');
   grid.innerHTML = '';
 
-  CHAPTERS.forEach(function (ch) {
+  // 难度决定这一局要收集多少能量（初级 10 / 中级 20 / 高级 30）
+  var need = (typeof energyForDifficulty === 'function')
+    ? energyForDifficulty(GS.difficulty)
+    : 20;
+  var diffName = (typeof balanceDiff === 'function') ? balanceDiff(GS.difficulty).name : '中级';
+  var tipEl = document.getElementById('map-select-tip');
+  if (tipEl) {
+    tipEl.textContent = diffName + '难度 · 集满 ' + need + ' 能量才能撤离，选一张地图开始';
+  }
+
+  // 只列出可选地图（金色沙漠 / 废弃医院），全部默认解锁
+  var maps = (typeof pickableMaps === 'function') ? pickableMaps() : CHAPTERS;
+  maps.forEach(function (ch, idx) {
     var card = document.createElement('div');
-    card.className = 'chapter-card' + (ch.unlocked ? '' : ' locked');
+    card.className = 'chapter-card';
     card.style.setProperty('--chapter-color', ch.color);
 
-    var html = '<div class="chapter-num">Chapter ' + ch.id + '</div>';
+    var html = '<div class="chapter-num">地图 ' + (idx + 1) + '</div>';
     html += '<div class="chapter-icon">' + ch.icon + '</div>';
     html += '<div class="chapter-name">' + ch.name + '</div>';
     html += '<div class="chapter-desc">' + ch.desc + '</div>';
-    html += '<div class="chapter-energy">🔋 撤离需要 ' + (ch.escapeEnergy || 5) + ' 能量</div>';
+    html += '<div class="chapter-energy">🔋 撤离需要 ' + need + ' 能量</div>';
 
-    if (ch.unlocked) {
-      card.onclick = function () { selectChapter(ch.id) };
-    } else {
-      html += '<div class="lock-icon">🔒</div>';
-    }
+    // 所有地图默认解锁：不再判断 ch.unlocked
+    card.onclick = function () { selectChapter(ch.id) };
 
     card.innerHTML = html;
     grid.appendChild(card);
@@ -296,8 +314,10 @@ function selectChapter(id) {
   GS.correct = 0; GS.total = 0;
   GS.weaponCount = 0;
   GS.energy = 0;
-  var chData = CHAPTERS.find(function (c) { return c.id === id; });
-  GS.energyMax = (chData && chData.escapeEnergy) || 5;
+  // 撤离门槛只看难度，不看地图（初级 10 / 中级 20 / 高级 30）
+  GS.energyMax = (typeof energyForDifficulty === 'function')
+    ? energyForDifficulty(GS.difficulty)
+    : 20;
   GS.fragments = 0;
   GS.escaping = false;
   GS.escaped = false;
@@ -367,7 +387,8 @@ function updateHUD() {
     if (GS.escaped) {
       subEl.textContent = '⏳ 已撤离，等待队友…';
     } else if (deposited >= eMax) {
-      subEl.textContent = '回飞船起飞！';
+      // 医院地图的撤离点在屋顶停机坪，不是平地上的飞船
+      subEl.textContent = (typeof HMAP !== 'undefined' && HMAP && HMAP.active) ? '上天台登机！' : '回飞船起飞！';
     } else {
       subEl.textContent = '碎片 ' + (GS.fragments || 0) + '/2';
     }
@@ -451,8 +472,11 @@ function updateMPPlayerList() {
     var isDown = isSelf ? !!GS.downed : !!(rec && rec.downed);
     var energy = isSelf ? GS.energy : (rec ? rec.energy || 0 : 0);
     var fragments = isSelf ? GS.fragments : (rec ? rec.fragments || 0 : 0);
+    // 队伍编号（P1/P2…）：主机分配、全队一致，和头顶标签 / 小地图用同一个号
+    var tno = (rec && rec.teamNo) || (isSelf ? (GS.myTeamNo || 0) : 0);
+    var noBadge = tno ? '<span class="team-no">P' + tno + '</span>' : '';
     item.innerHTML = '<span class="dot online"></span>' +
-      '<span class="name">' + (p.isHost ? '👑 ' : '') + (typeof escapeHtml === 'function' ? escapeHtml(p.name || '玩家') : (p.name || '玩家')) + (isSelf ? ' (我)' : '') + '</span>' +
+      '<span class="name">' + noBadge + (p.isHost ? '👑 ' : '') + (typeof escapeHtml === 'function' ? escapeHtml(p.name || '玩家') : (p.name || '玩家')) + (isSelf ? ' (我)' : '') + '</span>' +
       '<span class="hp-bar-mini"><span class="hp-fill-mini" style="width:' + hpPct + '%' + (isDown ? ';background:#ff6b6b' : '') + '"></span></span>' +
       '<span class="energy-bar-mini">' + (isDown ? '💀 倒地' : '🔋' + energy + '/' + eMax) + '</span>';
     container.appendChild(item);

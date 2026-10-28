@@ -66,6 +66,47 @@ var SyncManager = {
   _snapSeq: 0,
   _entityEvery: 5,
 
+  // ============================================================
+  // 队伍编号（P1 / P2 / P3…）
+  //
+  // 必须由主机统一分配并随快照下发，不能让各端自己"按玩家列表顺序算"：
+  // 电脑端服务器用的是普通对象（插入顺序稳定），但 Android 壳的房间是
+  // ConcurrentHashMap —— 遍历顺序不保证，各端算出来会是不同的号。
+  // 编号只增不减，中途有人退出也不回收，避免剩下的人看着自己的号跳变。
+  // ============================================================
+  _teamNos: {},
+  _teamNoNext: 1,
+
+  _assignTeamNos: function () {
+    if (typeof PeerManager === 'undefined' || !PeerManager) return this._teamNos;
+    var before = this._teamNoNext;
+    // 主机永远是 1 号
+    if (PeerManager.playerId && !this._teamNos[PeerManager.playerId]) {
+      this._teamNos[PeerManager.playerId] = this._teamNoNext++;
+    }
+    for (var pid in PeerManager.players) {
+      if (!this._teamNos[pid]) this._teamNos[pid] = this._teamNoNext++;
+      // 顺手写回 players，HUD 队友列表直接读
+      if (PeerManager.players[pid]) PeerManager.players[pid].teamNo = this._teamNos[pid];
+    }
+    // 主机自己的号同步到 GS（小地图/列表读它；加入者的由快照写入）
+    if (typeof GS !== 'undefined' && PeerManager.playerId && this._teamNos[PeerManager.playerId]) {
+      GS.myTeamNo = this._teamNos[PeerManager.playerId];
+    }
+    // 新分配了号 → 立刻重渲染一次队友列表。
+    // 那个列表平时只在血量/能量变化时刷新，而编号是开局后才分配的，
+    // 不主动触发的话主机 HUD 会一直停在"还没编号"的那一版。
+    if (this._teamNoNext !== before && typeof updateMPPlayerList === 'function') {
+      updateMPPlayerList();
+    }
+    return this._teamNos;
+  },
+
+  teamNoOf: function (peerId) {
+    if (!peerId) return 0;
+    return this._teamNos[peerId] || 0;
+  },
+
   sendSnapshot: function () {
     if (!PeerManager.isHost || !PeerManager.connected) return;
 
@@ -87,8 +128,11 @@ var SyncManager = {
 
     // 收集所有玩家状态
     var playerStates = [];
+    // 先分配队伍编号（主机 1 号，其余按首次出现顺序递增），下面每条状态都带上
+    var teamNos = this._assignTeamNos();
     // 主机自己的状态
     var hostState = this._collectLocalPlayerState();
+    hostState.teamNo = this.teamNoOf(PeerManager.playerId);
     playerStates.push(hostState);
 
     // 加入者的状态（从本地记录中获取）
@@ -99,6 +143,8 @@ var SyncManager = {
           id: pid,
           playerName: p.name,
           character: p.character,
+          // 队伍编号（P1/P2…）：主机分配的，全队一致
+          teamNo: teamNos[pid] || 0,
           x: p.position ? p.position.x : 0,
           z: p.position ? p.position.z : 0,
           rotY: p.rotationY || 0,
@@ -186,6 +232,36 @@ var SyncManager = {
       };
     }
 
+    // 伪装者状态
+    //
+    // 伪装者原本是"每个客户端各跑一只本地幻觉"，结果你手机上有个"队友"走过来，
+    // 别人那边根本没有这个人 —— 它骗的本来就该是全队，所以改成主机权威、
+    // 快照下发，加入者按 id 重建本地模型（见 ImpostorSystem.createRemoteImpostor）。
+    var impostorStates = [];
+    if (typeof window.impostors !== 'undefined' && window.impostors.length) {
+      window.impostors.forEach(function (im) {
+        if (!im || !im.userData || !im.userData.active || !im.parent) return;
+        if (!im.userData.netId) im.userData.netId = 'imp_' + Math.random().toString(36).substr(2, 8);
+        impostorStates.push({
+          id: im.userData.netId,
+          x: im.position.x,
+          z: im.position.z,
+          rotY: im.rotation.y,
+          hp: im.userData.hp || 1,
+          maxHp: im.userData.maxHp || im.userData.type.hp || 70,
+          revealed: !!im.userData.revealed,
+          // 伪装对象的身份：加入者用它建出一模一样的"那个人"
+          // （编号和等级也要带上，标签少一段就等于告诉玩家"这个是假的"）
+          name: (im.userData.disguise && im.userData.disguise.name) || '队友',
+          character: (im.userData.disguise && im.userData.disguise.character) || 'qike',
+          teamNo: (im.userData.disguise && im.userData.disguise.teamNo) || 0,
+          level: (im.userData.disguise && im.userData.disguise.level) || 1,
+          // 挥击序号：变化时加入者补一段挥击动画
+          attackSeq: im.userData.attackSeq || 0
+        });
+      });
+    }
+
     // 宝箱状态
     var chestStates = null;
     if (includeEntities && typeof window.normalChests !== 'undefined') {
@@ -254,6 +330,7 @@ var SyncManager = {
     return {
       players: playerStates,
       monsters: monsterStates,
+      impostors: impostorStates,
       chaser: chaserState,
       chests: chestStates,
       energyOrb: energyOrbState,
@@ -265,6 +342,8 @@ var SyncManager = {
       // 团队共享能量：正常靠 energy_shared 事件实时同步，这里用于兜底校准
       // （事件丢失、或加入者中途进来时需要立刻对齐到当前进度）
       teamEnergy: GS.energy || 0,
+      // 医院地图的门状态（null = 当前不是医院地图）
+      doors: (typeof hospitalDoorState === 'function') ? hospitalDoorState() : null,
       // 撤离所需能量上限 —— 也必须由主机下发。
       // 它其实是章节常量（escapeEnergy），但加入者一旦拿不到就退回默认 5，
       // 第 2 章起（8/12/16/20）就会出现"加入者能量满了能飞、主机还不够"的分裂。
@@ -406,7 +485,9 @@ var SyncManager = {
           }
         }
         // 同步到 PeerManager.players 确保下次快照发送正确状态
+        if (p.teamNo) GS.myTeamNo = p.teamNo;   // 自己的编号（小地图/队友列表要用）
         if (PeerManager.players[PeerManager.playerId]) {
+          PeerManager.players[PeerManager.playerId].teamNo = p.teamNo || 0;
           PeerManager.players[PeerManager.playerId].energy = GS.energy;
           PeerManager.players[PeerManager.playerId].fragments = GS.fragments;
           PeerManager.players[PeerManager.playerId].hp = GS.hp;
@@ -488,7 +569,11 @@ var SyncManager = {
         // 结果是 NaN（靠后面的 || 兜底才没炸）。改用 self 并自适应窗口。
         rp.interpDuration = self.interpWindow();
 
-        // 更新头顶名字标签（重绘 Sprite 贴图：名字 + 等级 + 血条）
+        // 队伍编号（主机下发的，全队一致）：小地图和头顶标签都要显示
+        rp.teamNo = p.teamNo || 0;
+        if (PeerManager.players[p.id]) PeerManager.players[p.id].teamNo = rp.teamNo;
+
+        // 更新头顶名字标签（重绘 Sprite 贴图：编号 + 名字 + 等级 + 血条）
         // 这段每 50ms 跑一次，原来每次都重画 canvas 并触发纹理上传，
         // 三个人就是每秒上百次 GPU 上传——是联机卡顿的主要来源之一。
         // 现在只在内容真正变化时重绘，血量按 5% 粒度比较。
@@ -496,10 +581,11 @@ var SyncManager = {
           var hpFrac = (p.maxHp > 0) ? (p.hp / p.maxHp) : 1;
           var lv = p.level || 1;
           var nm = p.playerName || rp.playerName || '玩家';
-          var sig = nm + '|' + lv + '|' + Math.round(hpFrac * 20);
+          var tno = rp.teamNo;
+          var sig = nm + '|' + lv + '|' + tno + '|' + Math.round(hpFrac * 20);
           if (rp.lastLabelSig !== sig) {
             rp.lastLabelSig = sig;
-            self._drawNameLabel(rp.labelCanvas, rp.labelCtx, rp.labelTexture, nm, hpFrac, lv);
+            self._drawNameLabel(rp.labelCanvas, rp.labelCtx, rp.labelTexture, nm, hpFrac, lv, tno);
           }
         }
       }
@@ -540,11 +626,63 @@ var SyncManager = {
     if (GS.mode === 'multiplayer' && !GS.isHost) {
       this._syncMonsters(snapshot);
       this._syncChaser(snapshot);
+      this._syncImpostors(snapshot);
       this._syncChests(snapshot);
       this._syncEnergyOrb(snapshot);
       this._syncItems(snapshot);
       this._syncFragments(snapshot);
       this._syncShip(snapshot);
+      // 医院门：开关状态以主机为准（关着的门在两端都要挡人，
+      // 不同步的话会出现"我这边门开着能过去、主机那边门关着"）
+      if (typeof applyHospitalDoorState === 'function') applyHospitalDoorState(snapshot.doors);
+    }
+  },
+
+  // ============================================================
+  // 伪装者同步（加入者端）
+  //
+  // 主机只下发"场上活着的那一只"，所以本帧不在列表里的，就是已经溜走 /
+  // 被打死了 —— 直接收掉，别留一个幻觉站在那儿。
+  // 位置只做插值，绝不在本地挪（N 久前那次"本地影子 AI"就是这么分裂的）。
+  // ============================================================
+  _syncImpostors: function (snapshot) {
+    if (!snapshot || !Array.isArray(snapshot.impostors)) return;
+    if (typeof window.createRemoteImpostor !== 'function') return;
+
+    var list = window.impostors;
+    if (!list) return;
+    var seen = {};
+
+    snapshot.impostors.forEach(function (d) {
+      if (!d || !d.id) return;
+      seen[d.id] = true;
+
+      var found = null;
+      for (var k = 0; k < list.length; k++) {
+        if (list[k] && list[k].userData && list[k].userData.netId === d.id) {
+          found = list[k];
+          break;
+        }
+      }
+
+      if (!found) {
+        window.createRemoteImpostor(d);
+      } else if (typeof window.applyRemoteImpostorState === 'function') {
+        window.applyRemoteImpostorState(found, d);
+      }
+    });
+
+    for (var i = list.length - 1; i >= 0; i--) {
+      var m = list[i];
+      if (!m || !m.userData) continue;
+      if (seen[m.userData.netId]) continue;
+      if (typeof window.removeImpostorFromScene === 'function') {
+        window.removeImpostorFromScene(m, true);   // 缩起来浮走，像"化作黑雾"
+      } else {
+        if (m.parent && window.scene) window.scene.remove(m);
+        var idx = list.indexOf(m);
+        if (idx !== -1) list.splice(idx, 1);
+      }
     }
   },
 
@@ -622,7 +760,9 @@ var SyncManager = {
           var typeDef = window.MONSTER_TYPES[ms.type];
           // 也检查 BOSSES 表（Boss 类型定义在 BOSSES 中）
           if (!typeDef && typeof window.BOSSES !== "undefined") {
-            for (var bi = 1; bi <= 5; bi++) {
+            // 不能写死 1~5：第 6 章（废弃医院）的 Boss 在 BOSSES[6]，
+            // 写死范围会让加入者那边"主机有 Boss、自己看不见"
+            for (var bi in window.BOSSES) {
               if (window.BOSSES[bi] && window.BOSSES[bi].name === ms.type) {
                 typeDef = window.BOSSES[bi];
                 break;
@@ -1144,8 +1284,11 @@ var SyncManager = {
     sprite.scale.set(1.5, 0.375, 1);
     sprite.position.y = 1.6;
     group.add(sprite);
-    // 初次绘制（满血）
-    this._drawNameLabel(canvas, ctx, texture, name, 1, 1);
+    // 初次绘制（满血）。
+    // 编号：主机端已经分配好了，直接取；加入者端要等第一条快照把 teamNo 带过来，
+    // 那时会再重绘一次（见 applySnapshot 里的 lastLabelSig 比较）。
+    var initTeamNo = this.teamNoOf(peerId);
+    this._drawNameLabel(canvas, ctx, texture, name, 1, 1, initTeamNo);
 
     // 高亮光环（区分玩家）
     var auraColor = (typeof CHARACTER_AURA !== 'undefined' && CHARACTER_AURA[character])
@@ -1165,6 +1308,8 @@ var SyncManager = {
       labelTexture: texture,
       character: character,
       playerName: name,
+      // 队伍编号（P1/P2…）：头顶标签和小地图都用它
+      teamNo: initTeamNo,
       state: { x: 0, z: 0, rotY: 0 },
       prevState: { x: 0, z: 0, rotY: 0 },
       interpStartTime: Date.now(),
@@ -1184,17 +1329,48 @@ var SyncManager = {
   // ============================================================
   // 绘制/重绘远程玩家头顶标签（名字 + HP 条）
   // ============================================================
-  _drawNameLabel: function (canvas, ctx, texture, text, hpPct, level) {
+  // 头顶标签：队伍编号 + 昵称 + 等级（血条在下面）
+  //
+  // teamNo：主机分配的队伍编号（0 = 单机 / 还没分配到，就不显示）
+  // 字号自适应：昵称最长 8 个汉字，加上 " Lv.12" 用 26px 会顶出 256 的画布，
+  // 所以先量一遍整行宽度，超了就按比例缩（最小 15px），保证永远不截断。
+  _drawNameLabel: function (canvas, ctx, texture, text, hpPct, level, teamNo) {
     ctx.clearRect(0, 0, 256, 64);
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(0, 0, 256, 64, 8); ctx.fill(); }
     else { ctx.fillRect(0, 0, 256, 64); }
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 26px Arial, sans-serif';
-    ctx.textAlign = 'center';
+
+    var lvText = level ? ' Lv.' + level : '';
+    var tagText = teamNo ? 'P' + teamNo + ' ' : '';
+    var nameText = text + lvText;
+    var label = tagText + nameText;
+
+    var fontSize = 26;
+    var maxW = 232;
+    ctx.font = 'bold ' + fontSize + 'px Arial, sans-serif';
+    var fullW = ctx.measureText(label).width;
+    if (fullW > maxW) {
+      fontSize = Math.max(15, Math.floor(fontSize * maxW / fullW));
+      ctx.font = 'bold ' + fontSize + 'px Arial, sans-serif';
+    }
     ctx.textBaseline = 'middle';
-    var label = text + (level ? ' Lv.' + level : '');
-    ctx.fillText(label, 128, 28);
+
+    if (tagText) {
+      // 编号用薄荷色单独画在左边，队友扫一眼就能对上小地图上的 P几
+      var tagW = ctx.measureText(tagText).width;
+      var nameW = ctx.measureText(nameText).width;
+      var startX = Math.max(6, 128 - (tagW + nameW) / 2);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#66ffcc';
+      ctx.fillText(tagText, startX, 28);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(nameText, startX + tagW, 28);
+    } else {
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.fillText(nameText, 128, 28);
+    }
+
     // HP 条
     var pct = Math.max(0, Math.min(1, hpPct));
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
@@ -1287,6 +1463,27 @@ var SyncManager = {
       if (rp.nameLabel && localCamera) {
         // Sprite 自动面向相机，不需要额外操作
       }
+
+      // ---- 主机端：队伍编号 / 等级 / 血量变化时重绘队友头顶标签 ----
+      //
+      // 加入者端靠 applySnapshot 重绘，主机端不发快照给自己，这条路径不存在；
+      // 而编号是开局后才分配的（创建模型时还是 0），不补这一段主机端
+      // 队友头上就永远缺「P几」。判定签名与 applySnapshot 里保持一致。
+      if (GS.isHost && rp.labelCanvas && rp.labelCtx) {
+        var up = (typeof PeerManager !== 'undefined') ? PeerManager.players[pid] : null;
+        var tno2 = (up && up.teamNo) ? up.teamNo : (rp.teamNo || 0);
+        var lv2 = (up && up.level) ? up.level : 1;
+        var hp2 = (up && typeof up.hp === 'number') ? up.hp : null;
+        var max2 = (up && up.maxHp) ? up.maxHp : 100;
+        var frac2 = (hp2 === null || !max2) ? 1 : Math.max(0, Math.min(1, hp2 / max2));
+        var sig2 = (rp.playerName || '玩家') + '|' + lv2 + '|' + tno2 + '|' + Math.round(frac2 * 20);
+        if (rp.lastLabelSig !== sig2) {
+          rp.lastLabelSig = sig2;
+          rp.teamNo = tno2;
+          this._drawNameLabel(rp.labelCanvas, rp.labelCtx, rp.labelTexture,
+            rp.playerName || '玩家', frac2, lv2, tno2);
+        }
+      }
     }
   },
 
@@ -1318,12 +1515,18 @@ var SyncManager = {
         } else {
           m.position.y = Math.abs(Math.sin(m.userData.walkPhase || 0)) * 0.08;
         }
-        // 发光动画
-        m.children.forEach(function (child, idx) {
-          if (child.isMesh && child.material && child.material.emissive) {
-            child.material.emissiveIntensity = 0.1 + Math.sin(now * 0.002 + idx) * 0.08;
-          }
-        });
+        // 专属模型（医院三种怪物）自己管动画：走路、飘动、眼睛明灭都在 tick 里，
+        // 不能再套这层"整体呼吸发光"，否则会把眼睛的固定亮度冲掉
+        if (typeof m.__creatureTick === 'function') {
+          try { m.__creatureTick(delta, m); } catch (e) { }
+        } else {
+          // 通用造型的发光动画
+          m.children.forEach(function (child, idx) {
+            if (child.isMesh && child.material && child.material.emissive) {
+              child.material.emissiveIntensity = 0.1 + Math.sin(now * 0.002 + idx) * 0.08;
+            }
+          });
+        }
       }
     }
     // Boss 插值
@@ -1335,6 +1538,9 @@ var SyncManager = {
         var t2 = Math.min(1, b.userData.interpTime / interpWin);
         b.position.x = b.userData.prevX + (b.userData.targetX - b.userData.prevX) * t2;
         b.position.z = b.userData.prevZ + (b.userData.targetZ - b.userData.prevZ) * t2;
+        if (typeof b.__creatureTick === 'function') {
+          try { b.__creatureTick(delta, b); } catch (e) { }
+        }
       }
     }
     // 抓捕者插值
@@ -1493,6 +1699,12 @@ var SyncManager = {
   initMultiplayerMode: function () {
     var self = this;
 
+    // 新一局的队伍编号从 P1 重新排（否则回主菜单再建房，peerId 换了，
+    // 旧映射残留会让编号一路涨到 P5、P6…）
+    this._teamNos = {};
+    this._teamNoNext = 1;
+    if (typeof GS !== 'undefined') GS.myTeamNo = 0;
+
     // 每局开局 init() 都会走到这里，而 PeerManager.on() 只是往数组里 push、没有去重。
     // 于是从第二局开始，同一份快照会被处理两遍（位置被插值重置两次、伤害重复结算、
     // 远程玩家被清理两遍），表现出来就是"越玩越乱、越玩越卡"。
@@ -1500,7 +1712,7 @@ var SyncManager = {
     var _MY_TOPICS = [
       'world_state_request', 'world_snapshot', 'player_input', 'monster_damage', 'monster_damage_reject',
       'item_pickup_sync', 'item_picked', 'item_refresh', 'chest_refresh', 'chest_opened', 'monster_shot', 'chest_interact',
-      'chest_reject', 'monster_attack_fx',
+      'chest_reject', 'monster_attack_fx', 'impostor_look', 'door_toggle',
       'quiz_answer', 'quiz_trigger', 'quiz_result',
       'game_event', 'game_over', 'chat_broadcast', 'energy_shared', 'attack_fx',
       'player_down', 'player_revived', 'all_down', 'player_escaped'
@@ -1510,6 +1722,17 @@ var SyncManager = {
     }
 
     console.log('[Sync] initMultiplayerMode: GS.mode=' + GS.mode + ' GS.isHost=' + GS.isHost + ' PeerManager.isHost=' + PeerManager.isHost);
+
+    // 医院地图：门的开关同步。
+    //
+    // 门不只是装饰 —— 关着的门在本地参与碰撞，是"挡怪"的手段。
+    // 如果各端各按各的，就会出现"我把门关上了、队友那边门还是开的"，
+    // 怪物从他的画面里穿门而过。所以谁开关门都广播，收到就照做。
+    // 主机 AI 推门也走同一条广播。
+    PeerManager.on('door_toggle', function (data) {
+      if (!data || !data.id) return;
+      if (typeof setHospitalDoor === 'function') setHospitalDoor(data.id, !!data.open, false);
+    });
 
     // 队友的攻击特效（开火 / 挥砍 / 放技能）。
     //
@@ -1779,10 +2002,28 @@ var SyncManager = {
       });
 
       // 加入者上报对怪物/抓捕者造成的伤害：主机权威扣血与判定死亡
+      // 加入者看破了伪装 → 把"现形"落到主机这一只身上。
+      // 现形状态随后由快照下发，于是所有人都同时看到它撕掉伪装。
+      PeerManager.on('impostor_look', function (data, fromPeerId) {
+        if (!data || !data.netId) return;
+        var im = (typeof window.findImpostorByNetId === 'function')
+          ? window.findImpostorByNetId(data.netId) : null;
+        if (!im || !im.userData || im.userData.revealed) return;
+        if (typeof window.revealImpostor === 'function') {
+          var who = (PeerManager.players[fromPeerId] && PeerManager.players[fromPeerId].name) || '队友';
+          window.revealImpostor(im, '👁 ' + who + ' 看清了：那不是' +
+            ((im.userData.disguise && im.userData.disguise.name) || '队友') + '！');
+        }
+      });
+
       PeerManager.on('monster_damage', function (data, fromPeerId) {
         if (!data || !data.dmg) return;
         var target = null;
-        if (data.isChaser) {
+        if (data.isImpostor) {
+          // 伪装者：主机端唯一那只（加入者打的那一下算到这里）
+          target = (typeof window.findImpostorByNetId === 'function')
+            ? window.findImpostorByNetId(data.netId) : null;
+        } else if (data.isChaser) {
           target = (typeof window.chaserMonster !== 'undefined') ? window.chaserMonster : null;
         } else if (typeof findMonsterByNetId === 'function') {
           target = findMonsterByNetId(data.netId);
@@ -1805,6 +2046,11 @@ var SyncManager = {
         target.userData.hp -= data.dmg;
         target.userData.lastAttackedTime = (typeof clock !== 'undefined' && clock) ? clock.elapsedTime : 0;
         target.userData.hitFlash = 0.2;
+        // 被队友打中即现形（伪装者靠"装作队友"骗人，挨打就该露馅）
+        if (target.userData.isImpostor && !target.userData.revealed && typeof window.revealImpostor === 'function') {
+          window.revealImpostor(target, '👊 队友打中了！这个' +
+            ((target.userData.disguise && target.userData.disguise.name) || '队友') + '是假的！');
+        }
         // Boss 阶段变化（与主机本地命中一致）
         if (target.userData.isBoss && target.userData.hp > 0 && target.userData.type) {
           var ratio = target.userData.hp / target.userData.type.hp;
@@ -1827,6 +2073,9 @@ var SyncManager = {
                 if (GS.running && !GS.gameOver) spawnChaser();
               }, (typeof chaserRespawnDelayMs === 'function') ? chaserRespawnDelayMs() : 35000);
             }
+          } else if (target.userData.isImpostor) {
+            // 伪装者被打死：走它自己那套收尾（星星、碎片、黑雾特效）
+            if (typeof window.defeatImpostor === 'function') window.defeatImpostor(target);
           } else if (typeof onMonsterDefeated === 'function') {
             onMonsterDefeated(target);
           }

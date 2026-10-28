@@ -167,6 +167,64 @@ function tickChestHold(chest, delta, isGolden) {
   return prog >= 1;
 }
 
+// 第三人称「飞船挡住镜头」检测用的射线，复用同一个实例，避免每帧 new
+var _shipBlockRay = null;
+
+// ============================================================
+// 视角模式（第一人称 / 第三人称）
+// ------------------------------------------------------------
+// 唯一判定入口：相机、模型显隐、按钮文案都从这里取，避免各处判断不一致
+// 出现"人物藏起来了但镜头还在背后"这种错位。
+// ============================================================
+function isFirstPersonView() {
+  if (GS.cameraMode !== 'first') return false;
+  if (typeof player === 'undefined' || !player || !player.parent) return false;
+  if (GS.downed) return false;                  // 倒地待救：必须看得见队友和救援进度
+  if (GS.escaped || GS.escaping) return false;  // 撤离动画 / 观战等待：交给第三人称镜头
+  return true;
+}
+
+// 切换视角。HUD「视角」按钮和键盘 V 都走这里。
+function toggleCameraMode() {
+  GS.cameraMode = (GS.cameraMode === 'first') ? 'third' : 'first';
+  // 记住偏好：下次进游戏沿用同一视角，不用每局重点
+  try { localStorage.setItem('mf_cameraMode', GS.cameraMode); } catch (e) { }
+
+  // 立刻把模型显隐摆正，别等下一帧 —— 第一人称第一帧会看到自己的后脑勺
+  if (typeof player !== 'undefined' && player) player.visible = !isFirstPersonView();
+  updateViewButton();
+
+  if (typeof showMessage === 'function') {
+    showMessage(GS.cameraMode === 'first' ? '👁 第一人称视角' : '🎥 第三人称视角', 0x66ffcc);
+  }
+  return GS.cameraMode;
+}
+
+// 按钮状态：图标与描边跟着当前视角走，一眼能看出现在是哪个
+function updateViewButton() {
+  var btn = document.getElementById('hud-view-btn');
+  if (!btn) return;
+  var fp = (GS.cameraMode === 'first');
+  btn.classList.toggle('is-first', fp);
+  var iconEl = btn.querySelector('.icon');
+  if (iconEl) iconEl.textContent = fp ? '👁' : '🎥';
+  btn.title = fp ? '当前：第一人称（点击切回第三人称）' : '当前：第三人称（点击切到第一人称）';
+}
+
+// 从本地偏好恢复视角（进游戏时调用；localStorage 不可用时静默回退默认值）
+function loadCameraMode() {
+  try {
+    var m = localStorage.getItem('mf_cameraMode');
+    if (m === 'first' || m === 'third') GS.cameraMode = m;
+  } catch (e) { }
+  updateViewButton();
+}
+
+window.isFirstPersonView = isFirstPersonView;
+window.toggleCameraMode = toggleCameraMode;
+window.updateViewButton = updateViewButton;
+window.loadCameraMode = loadCameraMode;
+
 function update(delta) {
   // 联机模式：如果游戏结束，广播一次 game_over 并退出
   if (GS.mode === 'multiplayer' && GS.isHost && GS.gameOver && !_gameOverBroadcasted && typeof PeerManager !== 'undefined') {
@@ -227,6 +285,12 @@ function update(delta) {
       }
     }
   }
+
+  // ===== 医院地图：门 / 灯光 / 旋翼 =====
+  // 放在暂停判断之前：答题、结算、撤离期间灯该闪还是闪、门该动还是动，
+  // 否则一切到答题界面背景里的日光灯就"冻住"，很出戏。
+  if (typeof updateHospitalDoors === 'function') updateHospitalDoors(delta);
+  if (typeof updateHospitalEffects === 'function') updateHospitalEffects(delta);
 
   if (!GS.running || GS.gameOver) return;
 
@@ -319,33 +383,138 @@ function update(delta) {
     }
   }
 
+  // 贴地：楼梯是连续斜坡、屋顶比一层高 3.7 米，
+  // 走路时脚底必须一直贴着当前地面，否则上楼梯会"陷进台阶里"。
+  // 跳跃 / 飞行期间不接管（那时候 y 由物理决定）。
+  if (player && !GS.isJumping && GS.canJump && !GS._flying && typeof floorYAt === 'function') {
+    var _fy = floorYAt(player.position.x, player.position.z, player.position.y);
+    if (Math.abs(player.position.y - _fy) > 0.001) player.position.y = _fy;
+  }
+
   // 帧率无关的指数平滑：桌面端更跟手，触屏稍缓
   var smoothK = 1 - Math.exp(-(IS_TOUCH ? 18 : 14) * delta);
   mouse.x += (targetMouse.x - mouse.x) * smoothK;
   mouse.y += (targetMouse.y - mouse.y) * smoothK;
 
-  var camOffset = (window.CAM_OFFSET || new THREE.Vector3(0, 3.45, 6.2)).clone();
-  // 倒地观战：把镜头抬高拉远一点，能看见队友在干什么（否则贴地视角什么都看不到）
-  if (GS.downed) {
-    camOffset.y += 3.4;
-    camOffset.z += 3.2;
-  }
-  var euler = new THREE.Euler(0, 0, 0, 'YXZ');
-  var quat = new THREE.Quaternion().setFromEuler(euler);
-  var rotOffset = camOffset.clone().applyQuaternion(quat);
-  var yQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), mouse.x);
-  rotOffset.applyQuaternion(yQuat);
+  // ============================================================
+  // 视角：第三人称（默认）/ 第一人称 —— HUD「视角」按钮 / 键盘 V 切换
+  // ------------------------------------------------------------
+  // 两种视角共用同一个 yaw（mouse.x），所以切换瞬间朝向是连续的：
+  // 第三人称是"相机在身后看向玩家"，视线方向 = -rotOffset，
+  // 而第一人称的前方正是 -rotOffset，切过去相当于镜头从背后推进眼睛里，
+  // 不会出现"一换视角就对着墙"。
+  // ============================================================
+  var firstPerson = isFirstPersonView();
 
-  var targetPos = player.position.clone().add(rotOffset);
-  // 相机跟随也做帧率无关平滑（被拖拽时加快跟随，避免玩家被拖出画面）
-  var camK = 1 - Math.exp(-((captureState && captureState.captured) ? 10 : 6) * delta);
-  camera.position.lerp(targetPos, camK);
-  // 命中震屏：偏移在 lookAt 之前叠加，视觉上是画面抖动而不是视线漂移
-  if (window.VX && VX.vfx) {
-    VX.vfx.tick(delta);
-    camera.position.add(VX.vfx.offset);
+  // 第一人称必须藏起自己的模型：相机就装在头部，不藏的话满屏都是脸和头发。
+  // 只在可见性与目标值不一致时才赋值，避免覆盖别处（撤离移除等）对 visible 的处理。
+  if (player && player.visible === firstPerson) player.visible = !firstPerson;
+
+  if (firstPerson) {
+    // 视线水平方向（与第三人称 lookAt 的 -rotOffset 完全等价）
+    var fx = -Math.sin(mouse.x), fz = -Math.cos(mouse.x);
+    // 眼高按体型缩放（爸爸 1.07 倍）；走路时加极小幅度上下浮动，静止时完全没有
+    var eyeY = 1.58 * (player.scale.y || 1);
+    var bob = 0;
+    if (typeof playerAnimState !== 'undefined' && playerAnimState.moving) {
+      bob = Math.sin((playerAnimState.walkPhase || 0) * 2) * 0.035;
+    }
+    var eyePos = new THREE.Vector3(
+      player.position.x + fx * 0.22,
+      player.position.y + eyeY + bob,
+      player.position.z + fz * 0.22
+    );
+
+    // 第一人称要紧贴头部，不能有跟随延迟（否则"人都跑出去了，画面还在后头"）。
+    // 但仍用指数平滑：从第三人称切过来那一瞬是快速推进，不是硬切。
+    var fpK = 1 - Math.exp(-26 * delta);
+    camera.position.lerp(eyePos, fpK);
+
+    // 命中震屏：偏移在 lookAt 之前叠加，视觉上是画面抖动而不是视线漂移
+    if (window.VX && VX.vfx) {
+      VX.vfx.tick(delta);
+      camera.position.add(VX.vfx.offset);
+    }
+    // 以 eyePos（而非加了震屏偏移的相机位置）为基准求朝向，
+    // 这样震屏只抖位置、不抖视线，不然第一人称会晕
+    camera.lookAt(eyePos.x + fx * 10, eyePos.y - 0.12, eyePos.z + fz * 10);
+
+    // 人物朝向跟随视线：联机快照里队友看到的就是你正看着的方向，
+    // 否则第一人称下人物会一直朝"上次移动方向"，队友那边看起来像在滑步。
+    // 技能腾空旋转期间不覆盖（那时 player.rotation.y 由技能动画驱动）。
+    if (typeof playerAnimState === 'undefined' || !(playerAnimState.skillTimer > 0)) {
+      player.rotation.y = Math.atan2(fx, fz);
+    }
+  } else {
+    var camOffset = (window.CAM_OFFSET || new THREE.Vector3(0, 3.45, 6.2)).clone();
+    // 倒地观战：把镜头抬高拉远一点，能看见队友在干什么（否则贴地视角什么都看不到）
+    if (GS.downed) {
+      camOffset.y += 3.4;
+      camOffset.z += 3.2;
+    }
+    // 医院是室内，层高只有 3.3 米：默认机位（脚上 3.45 米）会直接插进楼板里。
+    // 在楼里压低拉近一档；上了屋顶（露天）再恢复默认的远景。
+    if (typeof HMAP !== 'undefined' && HMAP && HMAP.active && player.position.y < HMAP.WH - 0.35) {
+      camOffset.set(0, 2.05, 4.5);
+      if (GS.downed) { camOffset.y = 2.2; camOffset.z = 5.4; }
+    }
+    var euler = new THREE.Euler(0, 0, 0, 'YXZ');
+    var quat = new THREE.Quaternion().setFromEuler(euler);
+    var rotOffset = camOffset.clone().applyQuaternion(quat);
+    var yQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), mouse.x);
+    rotOffset.applyQuaternion(yQuat);
+
+    var targetPos = player.position.clone().add(rotOffset);
+
+    // 飞船防穿：相机被船壳挡住时把镜头拉到船前面。
+    // 飞船就在出生点正前方 6 米、又是撤离必经点，第三人称相机（玩家身后 6.2 米、
+    // 高 3.45 米）很容易正好插进船体里 —— 屏幕上只剩一块深色船壳，什么都看不见。
+    // 只对飞船这一个大遮挡体做检测（几十个 mesh，开销可忽略），不做全场景射线，
+    // 否则 1300+ 个 mesh 每帧扫一遍，手机端扛不住。
+    if (!GS.escaping && !GS.escaped && typeof ship !== 'undefined' && ship && ship.parent) {
+      var camFocus = new THREE.Vector3(player.position.x, player.position.y + 1.2, player.position.z);
+      var camVec = new THREE.Vector3().subVectors(targetPos, camFocus);
+      var camWant = camVec.length();
+      if (camWant > 0.6) {
+        camVec.normalize();
+        if (!_shipBlockRay) _shipBlockRay = new THREE.Raycaster();
+        _shipBlockRay.set(camFocus, camVec);
+        _shipBlockRay.far = camWant;
+        var shipHits = _shipBlockRay.intersectObject(ship, true);
+        if (shipHits.length) {
+          // 停在遮挡点前面一点，最小 1.3 米 —— 再近就贴到自己脑袋上了
+          var camSafe = Math.max(1.3, shipHits[0].distance - 0.35);
+          targetPos.copy(camFocus).addScaledVector(camVec, camSafe);
+        }
+      }
+    }
+
+    // 医院：室内窄、层高低，机位很容易穿墙到隔壁房间。
+    // 从头部朝机位打一根线段，撞墙就把机位拉到墙内侧。
+    if (typeof HMAP !== 'undefined' && HMAP && HMAP.active && typeof hospitalCameraLimit === 'function') {
+      var camHead = new THREE.Vector3(player.position.x, player.position.y + 1.15, player.position.z);
+      var lim = hospitalCameraLimit(camHead, targetPos);
+      if (lim < 0.999) {
+        targetPos.lerpVectors(camHead, targetPos, lim);
+        targetPos.y += 0.12;   // 贴墙时略微抬高，避免看到地面
+      }
+      // 还在楼里（含楼梯上）时，机位不能高过吊顶 ——
+      // 楼板是一块 0.4 米厚的实体，机位钻进去以后会看到"墙糊满屏幕"。
+      if (player.position.y < HMAP.ROOF - 0.4) {
+        targetPos.y = Math.min(targetPos.y, HMAP.WH - 0.18);
+      }
+    }
+
+    // 相机跟随也做帧率无关平滑（被拖拽时加快跟随，避免玩家被拖出画面）
+    var camK = 1 - Math.exp(-((captureState && captureState.captured) ? 10 : 6) * delta);
+    camera.position.lerp(targetPos, camK);
+    // 命中震屏：偏移在 lookAt 之前叠加，视觉上是画面抖动而不是视线漂移
+    if (window.VX && VX.vfx) {
+      VX.vfx.tick(delta);
+      camera.position.add(VX.vfx.offset);
+    }
+    camera.lookAt(player.position.x, player.position.y + 1.05, player.position.z);
   }
-  camera.lookAt(player.position.x, player.position.y + 1.05, player.position.z);
 
   // 联机加入者模式：跳过怪物AI和道具拾取，使用插值
   if (GS.mode === 'multiplayer' && !GS.isHost) {
@@ -382,6 +551,9 @@ function update(delta) {
 
   // 一帧内所有位移来源处理完之后，统一收口做墙体碰撞
   applyEntityCollisions();
+
+  // 医院：怪物贴到关着的门会自己推开（只跑在主机/单机）
+  if (typeof hospitalMonstersPushDoors === 'function') hospitalMonstersPushDoors();
 
   // 金色宝箱和普通宝箱更新（加入者只更新动画，不触发答题）
   hideChestProgress();   // 每帧先隐藏，范围内有宝箱时下面会重新显示
@@ -858,11 +1030,16 @@ function respawnMonster(m) {
 
   var x = rm.cx + (Math.random() - 0.5) * (roomSize - 12);
   var z = rm.cz + (Math.random() - 0.5) * (roomSize - 12);
+  // 医院：落点要挪出墙体（见 mapSnapOpen）
+  if (typeof mapSnapOpen === 'function') {
+    var _rs = mapSnapOpen(x, z, 1.1);
+    x = _rs.x; z = _rs.z;
+  }
   g.position.set(x, groundY, z);
   scene.add(g);
 
   g.userData = {
-    radius: 0.9 * (t.scale || 1),
+    radius: (t.radius || 0.9) * (t.scale || 1),
     active: true,
     walkPhase: 0,
     type: t,
@@ -890,6 +1067,14 @@ function respawnMonster(m) {
 // 单个怪物的运动和AI更新
 function updateSingleMonsterAI(m, delta) {
   var t = m.userData.type || {};
+
+  // 专属模型的走路 / 待机动画（医院的三种怪物）。
+  // 放在所有守卫之前：硬直、被束缚的时候也要有细微动作，
+  // 否则整个人像被冻住，看着像掉帧。
+  if (typeof m.__creatureTick === 'function') {
+    try { m.__creatureTick(delta, m); } catch (e) { }
+  }
+
   if (m.userData.attackCooldown > 0) m.userData.attackCooldown -= delta;
 
   // 捆仙绳束缚：完全无法移动和攻击
@@ -1146,17 +1331,47 @@ function updateSingleMonsterAI(m, delta) {
     m.userData.rangedTimer -= delta;
     if (m.userData.rangedTimer <= 0 && dist > 3 && dist < 15) {
       m.userData.rangedTimer = t.rangedCooldown || 2.5;
+
+      // 开火瞬间让专属模型播放攻击动画（如幽灵的尖啸）
+      if (typeof m.__creatureAttack === 'function') {
+        try { m.__creatureAttack(m); } catch (e) { }
+      }
+
       var fb = new THREE.Mesh(
         new THREE.SphereGeometry(0.15, 8, 8),
         new THREE.MeshStandardMaterial({ color: t.emissive || 0xff4422, emissive: t.emissive || 0xff2200, emissiveIntensity: 0.8 })
       );
       fb.position.copy(m.position);
       fb.position.y += 1.0 * (t.scale || 1);
+      // 医院幽灵：怨灵弹丸定制——加色发光核心 + 呼吸光壳，替代通用圆球
+      if (t.model === 'ghost') {
+        fb.material = new THREE.MeshBasicMaterial({
+          color: 0x9fffdf, transparent: true, opacity: 0.95,
+          blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+        });
+        fb.scale.setScalar(0.85);
+        var _ghShell = new THREE.Mesh(
+          new THREE.SphereGeometry(0.32, 10, 8),
+          new THREE.MeshBasicMaterial({
+            color: 0x4dffc0, transparent: true, opacity: 0.26,
+            blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+          })
+        );
+        fb.add(_ghShell);
+        fb.userData.update = function (o, dt) {
+          o.rotation.y += dt * 7;
+          var _pk = 1 + Math.sin(clock.elapsedTime * 14) * 0.25;
+          if (_ghShell) _ghShell.scale.setScalar(_pk);
+        };
+      }
       // 瞄准「当前仇恨目标」而不是本地玩家：倒地的人不该继续被弹丸集火
       var aimPoint = _tgtPos.clone();
       aimPoint.y += 0.8;
       var fdir = new THREE.Vector3().subVectors(aimPoint, fb.position).normalize();
-      fb.userData = { vel: fdir.multiplyScalar(5), life: 4, playerDamage: monsterHitDamage(m) };
+      fb.userData = fb.userData || {};
+      fb.userData.vel = fdir.multiplyScalar(5);
+      fb.userData.life = 4;
+      fb.userData.playerDamage = monsterHitDamage(m);
       scene.add(fb);
       projectiles.push(fb);
       AudioMgr.playAttack();

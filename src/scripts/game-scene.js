@@ -243,6 +243,10 @@ function initScene() {
     keys[e.key.toLowerCase()] = true;
     if (e.key === ' ') { e.preventDefault(); tryJump(); }
     if (e.key === 'f' || e.key === 'F') { toggleFlashlight(); }
+    // 桌面端：V 切换第一/第三人称（手机上用 HUD 的「视角」按钮）
+    if (e.key === 'v' || e.key === 'V') { if (typeof toggleCameraMode === 'function') toggleCameraMode(); }
+    // 桌面端：E 开关身边的门（医院地图；手机上用 HUD 的「开门」按钮）
+    if (e.key === 'e' || e.key === 'E') { if (typeof toggleNearbyDoor === 'function') toggleNearbyDoor(); }
     // 桌面端：被抓住时按空格挣脱
     if (e.key === ' ' && captureState && captureState.captured) {
       e.preventDefault();
@@ -269,6 +273,8 @@ function initScene() {
 
   document.getElementById('hud').classList.remove('hidden');
   updateHUD();
+  // 恢复上次用过的视角（第一/第三人称），并同步按钮图标
+  if (typeof loadCameraMode === 'function') loadCameraMode();
   loading.style.opacity = '0';
   setTimeout(function () { loading.style.display = 'none' }, 500);
   GS.running = true;

@@ -12,6 +12,16 @@
 //      （旧版 foot.position.y = -0.28，根节点贴地，脚整只在 y=0 以下）。
 //   3. 手臂挂在枢轴上，走路时前后摆动；暗影下摆持续飘动。
 function buildChaserMesh() {
+  // 医院地图：抓捕者是"停尸房管理员"（写实护工造型，见 HospitalCreatures.js）。
+  // 紫袍暗影那套是幻想风，放在贴着瓷砖的走廊里太出戏。
+  // 返回的模型必须保留 userData.visual 契约（eyes/core/disc/hem），
+  // applyChaserLook 靠它做状态表现。
+  if (typeof isHospitalMap === 'function' && isHospitalMap() &&
+    typeof buildHospitalOrderly === 'function') {
+    var order = buildHospitalOrderly();
+    if (order) return order;
+  }
+
   var S = VX.shape, M = VX.materials;
   var g = new THREE.Group();
 
@@ -366,7 +376,11 @@ function spawnChaser() {
   chaserMonster = g;
   window.chaserMonster = g;
   chaserLeaveTimer = CHASER_LEAVE_DURATION;
-  showMessage('🌑 暗影追捕者出现了! 它在四处搜寻你!', 0x7b5cff);
+  if (typeof isHospitalMap === 'function' && isHospitalMap()) {
+    showMessage('🔦 停尸房管理员出现了! 他的手电正扫过走廊…', 0xffc46a);
+  } else {
+    showMessage('🌑 暗影追捕者出现了! 它在四处搜寻你!', 0x7b5cff);
+  }
 
   // 登场：原地炸开一团暗影，让"它来了"有存在感
   if (window.VX && VX.vfx) {
@@ -800,6 +814,10 @@ function capturePlayer() {
     chaserMonster.userData.dragTarget = null;
     chaserMonster.userData.deliveredToBoss = false;
     chaserMonster.userData.isChasing = false;
+    // 专属模型的抓捕动画（停尸房管理员的双臂前扑）
+    if (typeof chaserMonster.__creatureGrab === 'function') {
+      try { chaserMonster.__creatureGrab(); } catch (e) { }
+    }
   }
   // 提示要讲清楚"怎么挣扎"和"松手会掉"：新机制下进度是连续衰减的
   showMessage('🕸️ 被追捕者抓住了! 连续点右下角攻击键挣脱（松手进度会掉）', 0xff4444);
